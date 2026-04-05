@@ -1,0 +1,94 @@
+name: Update formula
+on:
+  repository_dispatch:
+    types: [formula-update]
+  workflow_dispatch:
+    inputs:
+      formula:
+        description: "Formula name (without .rb)"
+        required: true
+      version:
+        description: "Version tag (e.g., v1.1.0)"
+        required: true
+      url:
+        description: "Source tarball URL"
+        required: true
+      type:
+        description: "Formula type"
+        required: true
+        type: choice
+        options: [python, node]
+
+concurrency:
+  group: formula-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      FORMULA: ${{ github.event.client_payload.formula || inputs.formula }}
+      VERSION: ${{ github.event.client_payload.version || inputs.version }}
+      URL: ${{ github.event.client_payload.url || inputs.url }}
+      TYPE: ${{ github.event.client_payload.type || inputs.type }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Compute SHA256
+        id: sha
+        run: |
+          SHA256=$(curl -sL "$URL" | shasum -a 256 | cut -d ' ' -f1)
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Update URL and SHA256
+        env:
+          SHA256: ${{ steps.sha.outputs.sha256 }}
+        run: |
+          python3 << 'PYEOF'
+          import re, os
+          path = f"Formula/{os.environ['FORMULA']}.rb"
+          url = os.environ["URL"]
+          sha = os.environ["SHA256"]
+          content = open(path).read()
+          content = re.sub(r'(  url )".*?"', rf'\1"{url}"', content, count=1)
+          content = re.sub(r'(  sha256 )".*?"', rf'\1"{sha}"', content, count=1)
+          open(path, "w").write(content)
+          PYEOF
+
+      - name: Update Python resource blocks
+        if: env.TYPE == 'python'
+        run: |
+          python3 -m venv /tmp/venv
+          source /tmp/venv/bin/activate
+          pip install "$URL" homebrew-pypi-poet
+          if poet -r "$FORMULA" > /tmp/resources.rb 2>/dev/null; then
+            python3 << 'PYEOF'
+          import re, os
+          path = f"Formula/{os.environ['FORMULA']}.rb"
+          content = open(path).read()
+          resources = open("/tmp/resources.rb").read().strip()
+          content = re.sub(
+              r'(  resource .+?)(\n\n  def install)',
+              resources + r'\2',
+              content,
+              flags=re.DOTALL,
+          )
+          open(path, "w").write(content)
+          PYEOF
+            echo "Resource blocks updated via poet"
+          else
+            echo "::warning::poet failed (package may not be on PyPI). Resource blocks unchanged."
+          fi
+
+      - name: Commit and push
+        run: |
+          git diff --exit-code && echo "No changes" && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Formula/$FORMULA.rb"
+          git commit -m "chore($FORMULA): bump to $VERSION"
+          git push
