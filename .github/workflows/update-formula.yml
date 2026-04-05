@@ -19,6 +19,9 @@ on:
         type: choice
         options: [python, node]
 
+permissions:
+  contents: write
+
 concurrency:
   group: formula-update
   cancel-in-progress: false
