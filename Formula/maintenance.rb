@@ -60,6 +60,8 @@ class Maintenance < Formula
     run [opt_bin/"maintenance", "run"]
     run_type :cron
     cron "0 12 * * 1"
+    run_at_load false
+    environment_variables PATH: std_service_path_env
     log_path var/"log/maintenance.log"
     error_log_path var/"log/maintenance.log"
     process_type :background
