@@ -3,8 +3,8 @@ class Maintenance < Formula
 
   desc "Automated macOS maintenance (gcloud, pnpm, uv, fisher, mole, brew)"
   homepage "https://github.com/calvindotsg/maintenance"
-  url "https://github.com/calvindotsg/maintenance/archive/refs/tags/v1.1.0.tar.gz"
-  sha256 "577da99372deebd8e0d04175d3d650f24861f7cef9ee2a3231e53924f9eba070"
+  url "https://github.com/calvindotsg/maintenance/archive/refs/tags/v1.1.1.tar.gz"
+  sha256 "fce5d0431879d790c43e50888980274bd53c609186b0e5e516c1d85ea60eedb8"
   license "MIT"
 
   depends_on "python@3.13"
