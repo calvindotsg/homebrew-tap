@@ -1,10 +1,10 @@
 class MacUpkeep < Formula
   include Language::Python::Virtualenv
 
-  desc "Automated macOS maintenance (gcloud, pnpm, uv, fisher, mole, brew)"
-  homepage "https://github.com/calvindotsg/maintenance"
-  url "https://github.com/calvindotsg/maintenance/archive/refs/tags/v2.1.0.tar.gz"
-  sha256 "0d4a1476952976537172a5f824c3efc34c7571c0bd24fc14524ce3c0ed7145c5"
+  desc "Automated macOS maintenance CLI (TOML-driven, weekly scheduler)"
+  homepage "https://github.com/calvindotsg/mac-upkeep"
+  url "https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/v2.1.0.tar.gz"
+  sha256 "f1f4faf4db5ae082a8955109d0378febd8ad708dc34ad055138e7c28f3247059"
   license "MIT"
 
   depends_on "python@3.13"

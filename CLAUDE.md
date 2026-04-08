@@ -18,7 +18,7 @@ Tap name `calvindotsg/tap` maps to this repo via Homebrew's `homebrew-` prefix c
 4. For Python formulas: generate resource stanzas with `brew update-python-resources` or PyPI lookup
 5. Test: `brew install --build-from-source calvindotsg/tap/<name>`
 6. Commit and push
-7. Add a `bump-tap` job to the source repo's `release.yml` (copy from `calvindotsg/maintenance/.github/workflows/release.yml`, change `formula`, `url`, `type`)
+7. Add a `bump-tap` job to the source repo's `release.yml` (copy from `calvindotsg/mac-upkeep/.github/workflows/release.yml`, change `formula`, `url`, `type`)
 
 ## Updating a Formula Version
 

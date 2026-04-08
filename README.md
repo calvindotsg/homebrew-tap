@@ -12,4 +12,4 @@ brew tap calvindotsg/tap
 
 | Formula | Description | Install |
 |---------|-------------|---------|
-| [maintenance](https://github.com/calvindotsg/maintenance) | Automated macOS maintenance (weekly) | `brew install calvindotsg/tap/maintenance` |
+| [mac-upkeep](https://github.com/calvindotsg/mac-upkeep) | Automated macOS maintenance CLI (TOML-driven, weekly scheduler) | `brew install calvindotsg/tap/mac-upkeep` |
