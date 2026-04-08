@@ -4,8 +4,10 @@
 
 ```
 Formula/                        Homebrew formula definitions (.rb)
+Casks/                          Homebrew cask definitions (.rb)
 .github/workflows/
   update-formula.yml            Automated formula update (dispatch + manual)
+  update-cask.yml               Manual cask update (dispatch, with commented-out schedule)
 ```
 
 Tap name `calvindotsg/tap` maps to this repo via Homebrew's `homebrew-` prefix convention.
@@ -27,6 +29,24 @@ Automated via `update-formula.yml`. Triggered automatically by source repos on r
 **Automatic flow:** Source repo release → `bump-tap` job dispatches → `update-formula.yml` runs → URL/sha256 updated → committed and pushed.
 
 **Manual fallback:** Actions tab → "Update formula" → Run workflow → enter formula name, version tag, tarball URL, type (python/node).
+
+## Adding a Cask
+
+1. Compute sha256 for each architecture: `curl -sL "<dmg-url>" | shasum -a 256`
+2. Create `Casks/<name>.rb` following existing casks as template
+3. Test: `brew audit --cask --new calvindotsg/tap/<name>` and `brew livecheck --cask calvindotsg/tap/<name>`
+4. Install test: `brew install --cask calvindotsg/tap/<name>`
+5. Commit and push
+
+## Updating a Cask Version
+
+Manual trigger via Actions UI or CLI:
+
+    gh workflow run update-cask.yml -f cask=firefoo -f version=1.6.0
+
+Leave `version` empty to auto-detect via `brew livecheck`. The workflow computes arch-specific SHA256s automatically.
+
+Note: `update-cask.yml` currently hardcodes Firefoo's URL pattern. Generalize before adding more casks.
 
 ## Service Formulas
 

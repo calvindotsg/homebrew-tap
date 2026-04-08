@@ -1,0 +1,83 @@
+name: Update cask
+on:
+  # Uncomment for automated weekly version checks (uses macos-latest, 3x minute cost):
+  # schedule:
+  #   - cron: '0 8 * * 1'
+  workflow_dispatch:
+    inputs:
+      cask:
+        description: "Cask name (without .rb)"
+        required: true
+        default: firefoo
+      version:
+        description: "Version (e.g., 1.5.12) — leave empty to auto-detect via livecheck"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cask-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: macos-latest
+    env:
+      CASK: ${{ inputs.cask }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VER="${{ inputs.version }}"
+            VER="${VER#v}"
+          else
+            brew tap calvindotsg/tap "$(pwd)"
+            VER=$(brew livecheck --cask --newer-only --json "calvindotsg/tap/$CASK" \
+              | jq -r '.[0].version.latest // empty')
+            [ -z "$VER" ] && echo "Already up to date" && exit 0
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Compute SHA256
+        id: sha
+        env:
+          VER: ${{ steps.version.outputs.version }}
+        run: |
+          ARM_SHA=$(curl -sL "https://github.com/mltek/firefoo-releases/releases/download/v${VER}/Firefoo-${VER}-arm64.dmg" \
+            | shasum -a 256 | cut -d' ' -f1)
+          X64_SHA=$(curl -sL "https://github.com/mltek/firefoo-releases/releases/download/v${VER}/Firefoo-${VER}-x64.dmg" \
+            | shasum -a 256 | cut -d' ' -f1)
+          echo "arm=$ARM_SHA" >> "$GITHUB_OUTPUT"
+          echo "intel=$X64_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Update cask file
+        env:
+          VER: ${{ steps.version.outputs.version }}
+          ARM_SHA: ${{ steps.sha.outputs.arm }}
+          X64_SHA: ${{ steps.sha.outputs.intel }}
+        run: |
+          python3 << 'PYEOF'
+          import re, os
+          path = f"Casks/{os.environ['CASK']}.rb"
+          ver, arm, x64 = os.environ["VER"], os.environ["ARM_SHA"], os.environ["X64_SHA"]
+          content = open(path).read()
+          content = re.sub(r'(  version )".*?"', rf'\1"{ver}"', content, count=1)
+          content = re.sub(r'(  sha256 arm:\s+)"[a-f0-9]+"', rf'\1"{arm}"', content, count=1)
+          content = re.sub(r'(         intel: )"[a-f0-9]+"', rf'\1"{x64}"', content, count=1)
+          open(path, "w").write(content)
+          PYEOF
+
+      - name: Commit and push
+        env:
+          VER: ${{ steps.version.outputs.version }}
+        run: |
+          git diff --exit-code && echo "No changes" && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Casks/$CASK.rb"
+          git commit -m "chore($CASK): bump to $VER"
+          git push
