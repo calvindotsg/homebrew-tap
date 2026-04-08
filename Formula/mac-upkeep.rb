@@ -1,4 +1,4 @@
-class Maintenance < Formula
+class MacUpkeep < Formula
   include Language::Python::Virtualenv
 
   desc "Automated macOS maintenance (gcloud, pnpm, uv, fisher, mole, brew)"
@@ -53,21 +53,20 @@ class Maintenance < Formula
 
   def install
     virtualenv_install_with_resources
-    (share/"maintenance").install "config.example.toml"
   end
 
   service do
-    run [opt_bin/"maintenance", "run"]
+    run [opt_bin/"mac-upkeep", "run"]
     run_type :cron
     cron "0 12 * * 1"
     run_at_load false
     environment_variables PATH: std_service_path_env
-    log_path var/"log/maintenance.log"
-    error_log_path var/"log/maintenance.log"
+    log_path var/"log/mac-upkeep.log"
+    error_log_path var/"log/mac-upkeep.log"
     process_type :background
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/maintenance --version")
+    assert_match version.to_s, shell_output("#{bin}/mac-upkeep --version")
   end
 end
