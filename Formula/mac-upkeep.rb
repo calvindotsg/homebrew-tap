@@ -59,7 +59,7 @@ class MacUpkeep < Formula
     run [opt_bin/"mac-upkeep", "run"]
     run_type :cron
     cron "0 12 * * 1"
-    run_at_load false
+    run_at_load true
     environment_variables PATH: std_service_path_env
     log_path var/"log/mac-upkeep.log"
     error_log_path var/"log/mac-upkeep.log"
