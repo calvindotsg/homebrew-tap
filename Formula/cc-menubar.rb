@@ -3,8 +3,8 @@ class CcMenubar < Formula
 
   desc "Pace your quota — proactive forecasting for Claude Code Max"
   homepage "https://github.com/calvindotsg/cc-menubar"
-  url "https://github.com/calvindotsg/cc-menubar/archive/refs/tags/v0.2.1.tar.gz"
-  sha256 "73c32101f4c85c35e653829bd646841af6a162c20d5ad8d63f9155797a91e2f1"
+  url "https://github.com/calvindotsg/cc-menubar/archive/refs/tags/v0.2.2.tar.gz"
+  sha256 "48b263156cdc6fef7142cb7fa4989c2f2871e5471d855dd423db82cbbb2d5728"
   license "MIT"
 
   depends_on "python@3.13"
