@@ -30,6 +30,19 @@ Automated via `update-formula.yml`. Triggered automatically by source repos on r
 
 **Manual fallback:** Actions tab → "Update formula" → Run workflow → enter formula name, version tag, tarball URL, type (python/node).
 
+### Third-Party Formulas
+
+For formulas wrapping packages Calvin doesn't control (e.g., `codeburn`), the `repository_dispatch` auto-bump flow is unavailable — there's no upstream release workflow to dispatch from. Updates are manual:
+
+    gh workflow run update-formula.yml \
+      -f formula=codeburn \
+      -f version=vX.Y.Z \
+      -f url='https://registry.npmjs.org/codeburn/-/codeburn-X.Y.Z.tgz' \
+      -f type=node \
+      -R calvindotsg/homebrew-tap
+
+Future option: scheduled `brew livecheck` + `bump-formula-pr` that opens PRs on upstream releases. Not yet implemented.
+
 ## Adding a Cask
 
 1. Compute sha256 for each architecture: `curl -sL "<dmg-url>" | shasum -a 256`
