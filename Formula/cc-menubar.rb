@@ -8,7 +8,7 @@ class CcMenubar < Formula
   license "MIT"
 
   depends_on "python@3.13"
-  depends_on :macos
+  depends_on macos: :sonoma
 
   resource "typer" do
     url "https://files.pythonhosted.org/packages/f5/24/cb09efec5cc954f7f9b930bf8279447d24618bb6758d4f6adf2574c41780/typer-0.24.1.tar.gz"
