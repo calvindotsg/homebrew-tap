@@ -1,0 +1,21 @@
+name: livecheck
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@master
+      - uses: dawidd6/action-homebrew-bump-formula@v5
+        with:
+          token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+          formula: |
+            calvindotsg/tap/codeburn
+            calvindotsg/tap/granola-cli
+            calvindotsg/tap/opensrc
+          livecheck: true
