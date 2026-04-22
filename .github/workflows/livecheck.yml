@@ -14,6 +14,7 @@ jobs:
       - uses: dawidd6/action-homebrew-bump-formula@v5
         with:
           token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+          no_fork: true
           formula: |
             calvindotsg/tap/codeburn
             calvindotsg/tap/granola-cli
