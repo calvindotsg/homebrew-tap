@@ -32,7 +32,11 @@ Automated via `update-formula.yml`. Triggered automatically by source repos on r
 
 ### Third-Party Formulas
 
-For formulas wrapping packages Calvin doesn't control (e.g., `codeburn`), the `repository_dispatch` auto-bump flow is unavailable — there's no upstream release workflow to dispatch from. Updates are manual:
+For formulas wrapping packages Calvin doesn't control (e.g., `codeburn`, `granola-cli`, `opensrc`), the `repository_dispatch` auto-bump flow is unavailable — there's no upstream release workflow to dispatch from. Instead, bumps flow through a tap-scoped **livecheck cron** defined in `.github/workflows/livecheck.yml` (daily 07:00 UTC) using [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula). Adding a new third-party formula = append its name to the `formula:` list in that workflow.
+
+The scope is deliberately limited to third-party formulas by an explicit list — Calvin-owned formulas route through `repository_dispatch` from their source repos, and including them here would race against those pushes.
+
+**Manual override** (if livecheck fails or to force a specific version):
 
     gh workflow run update-formula.yml \
       -f formula=codeburn \
@@ -41,7 +45,7 @@ For formulas wrapping packages Calvin doesn't control (e.g., `codeburn`), the `r
       -f type=node \
       -R calvindotsg/homebrew-tap
 
-Future option: scheduled `brew livecheck` + `bump-formula-pr` that opens PRs on upstream releases. Not yet implemented.
+See `## Reusable Patterns` (added in the docs-reusable-patterns PR) for the "scheduled livecheck cron" and "explicit third-party formula list" templates.
 
 ## Adding a Cask
 
