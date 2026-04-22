@@ -69,6 +69,19 @@ Note: `update-cask.yml` currently hardcodes Firefoo's URL pattern. Generalize be
 
 Formulas with a `service` block generate plists at `~/Library/LaunchAgents/homebrew.mxcl.<name>.plist`. Managed via `brew services start/stop/info <name>`.
 
+## Reusable Patterns
+
+Templates in this tap worth copying/adapting into other Homebrew taps or formula repos. Each entry is a pointer + "use when" — full mechanics live in the referenced file.
+
+- **Node CLI formula (`std_npm_args`)** — see `Formula/codeburn.rb`, `Formula/granola-cli.rb`. Use for pure-JS CLIs published to npm.
+- **Python virtualenv formula** — see `Formula/cc-menubar.rb` (SwiftBar plugin), `Formula/mac-upkeep.rb` (launchd service). Explicit `resource` stanzas required per `Language::Python::Virtualenv`; generate with `brew update-python-resources` or `poet -r`.
+- **Prebuilt binary from GitHub Releases** — see `Formula/opensrc.rb`. `on_arm`/`on_intel` + `bin.install <file> => <name>`. Use for Rust/Go CLIs where upstream ships native binaries and the npm-wrapper download-during-install would violate `brew audit`.
+- **Arch-specific cask** — see `Casks/firefoo.rb`. DMG with separate arm64/x64 builds.
+- **Service formula (launchd via `service do`)** — see `Formula/mac-upkeep.rb`. Cron DSL accepts only single ints per field (see Non-Obvious Constraints below).
+- **Auto-bump via source-repo dispatch** — see `.github/workflows/update-formula.yml` + source-repo `bump-tap` job pattern (`calvindotsg/mac-upkeep/.github/workflows/release.yml`). For Calvin-owned formulas.
+- **Scheduled livecheck cron (third-party)** — see `.github/workflows/livecheck.yml`. `dawidd6/action-homebrew-bump-formula@v5` with `livecheck: true`. Daily 07:00 UTC. For formulas whose source repos Calvin doesn't control.
+- **Explicit third-party `formula:` list in livecheck** — scope the cron to non-Calvin-owned formulas by enumerating them (`codeburn`, `granola-cli`, `opensrc`). Avoids races with the `repository_dispatch` path used by Calvin-owned formulas.
+
 ## Non-Obvious Constraints
 
 - Formula `depends_on` only works with other formulas, not casks.

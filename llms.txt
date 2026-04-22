@@ -1,0 +1,12 @@
+# calvindotsg/homebrew-tap
+
+> Personal Homebrew tap: formulas (Node CLI, Python venv, prebuilt binary, service) + cask + automated bump workflows.
+
+## Core
+
+- [README.md](README.md): Formula + cask table, install commands
+- [CLAUDE.md](CLAUDE.md): Tap structure, add/update workflows, reusable formula templates, non-obvious constraints
+
+## Reusable patterns
+
+- [CLAUDE.md#reusable-patterns](CLAUDE.md): Formula templates (Node CLI, Python venv, prebuilt binary, service) + workflow patterns (auto-bump dispatch, scheduled livecheck cron) to copy/adapt
