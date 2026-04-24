@@ -1,1 +1,32 @@
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Editor / IDE
+*~
+*.swp
+*.swo
+*.bak
+*.iml
+.idea/
+.vscode/
+
+# Ruby / bundler (local brew audit, brew tests)
+/.bundle/
+/vendor/
+/coverage/
+*.gem
+
+# Python (formula resource regeneration: brew update-python-resources, poet -r)
+__pycache__/
+*.py[cod]
+/.venv/
+/venv/
+
+# Local scratch + Claude Code machine-local settings
+/.scratchpad/
+.claude/settings.local.json
