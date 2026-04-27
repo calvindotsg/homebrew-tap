@@ -73,7 +73,7 @@ Formulas with a `service` block generate plists at `~/Library/LaunchAgents/homeb
 
 Templates in this tap worth copying/adapting into other Homebrew taps or formula repos. Each entry is a pointer + "use when" — full mechanics live in the referenced file.
 
-- **Node CLI formula (`std_npm_args`)** — see `Formula/codeburn.rb`, `Formula/granola-cli.rb`. Use for pure-JS CLIs published to npm.
+- **Node CLI formula (`std_npm_args`)** — see `Formula/codeburn.rb`, `Formula/granola-cli.rb`. Use for pure-JS CLIs published to npm. Do not substitute pnpm or yarn: Homebrew redirects `HOME` during the build sandbox so a pnpm global store doesn't persist, Cellar isolation defeats cross-formula dedup, and `std_npm_args` injects cache redirection plus `--ignore-scripts` and `--min-release-age=1` (24-hour supply-chain quarantine) — no equivalent helper exists for pnpm. For real disk savings, prefer the prebuilt-binary pattern below when upstream ships native binaries.
 - **Python virtualenv formula** — see `Formula/cc-menubar.rb` (SwiftBar plugin), `Formula/mac-upkeep.rb` (launchd service). Explicit `resource` stanzas required per `Language::Python::Virtualenv`; generate with `brew update-python-resources` or `poet -r`.
 - **Prebuilt binary from GitHub Releases** — see `Formula/opensrc.rb`. `on_arm`/`on_intel` + `bin.install <file> => <name>`. Use for Rust/Go CLIs where upstream ships native binaries and the npm-wrapper download-during-install would violate `brew audit`.
 - **Arch-specific cask** — see `Casks/firefoo.rb`. DMG with separate arm64/x64 builds.
