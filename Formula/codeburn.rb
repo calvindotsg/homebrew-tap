@@ -1,8 +1,8 @@
 class Codeburn < Formula
   desc "See where your AI coding tokens go — CLI dashboard for Claude Code cost"
   homepage "https://github.com/getagentseal/codeburn"
-  url "https://registry.npmjs.org/codeburn/-/codeburn-0.8.9.tgz"
-  sha256 "2875375033688b232c27b6fddd99f8a7167bfa7b6dbb3f4ef433cf07287a3e11"
+  url "https://registry.npmjs.org/codeburn/-/codeburn-0.9.8.tgz"
+  sha256 "7121663ec853f58b8497d891c5910535c0f0e34f4be0ba62bcdb02d37623b523"
   license "MIT"
 
   depends_on "node"
