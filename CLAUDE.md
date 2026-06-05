@@ -47,6 +47,12 @@ The scope is deliberately limited to third-party formulas by an explicit list �
 
 See `## Reusable Patterns` (added in the docs-reusable-patterns PR) for the "scheduled livecheck cron" and "explicit third-party formula list" templates.
 
+### CI & Auto-Merge
+
+`.github/workflows/tests.yml` runs `brew test-bot` on every PR (and pushes to `main`): `--only-tap-syntax` audits/styles the whole tap, `--only-formulae` builds and tests the formulae *changed* in the PR. Matrix is ubuntu (Linux-compatible CLIs) + macOS (the `:macos`-gated formulae). It only builds changed formulae, so cost scales with the diff.
+
+`.github/workflows/automerge.yml` squash-merges and **deletes the branch** of any same-repo `bump-*` PR once test-bot passes. Branch deletion is the actual fix for the recurring livecheck failures: `brew bump-formula-pr` reuses `bump-<formula>-<version>` branch names, so an unmerged PR's stale branch made every later run fail to push (non-fast-forward) and crash on the action's `odie` bug. With auto-merge draining the queue, the branch never lingers. Fork PRs are skipped (`isCrossRepository` guard) so a fork can't auto-merge itself.
+
 ## Adding a Cask
 
 1. Compute sha256 for each architecture: `curl -sL "<dmg-url>" | shasum -a 256`
@@ -81,6 +87,8 @@ Templates in this tap worth copying/adapting into other Homebrew taps or formula
 - **Auto-bump via source-repo dispatch** — see `.github/workflows/update-formula.yml` + source-repo `bump-tap` job pattern (`calvindotsg/mac-upkeep/.github/workflows/release.yml`). For Calvin-owned formulas.
 - **Scheduled livecheck cron (third-party)** — see `.github/workflows/livecheck.yml`. `dawidd6/action-homebrew-bump-formula@v5` with `livecheck: true`. Daily 07:00 UTC. For formulas whose source repos Calvin doesn't control.
 - **Explicit third-party `formula:` list in livecheck** — scope the cron to non-Calvin-owned formulas by enumerating them (`codeburn`, `granola-cli`, `opensrc`). Avoids races with the `repository_dispatch` path used by Calvin-owned formulas.
+- **`brew test-bot` PR CI** — see `.github/workflows/tests.yml`. Canonical `tap-new` template (ubuntu + macOS matrix); builds only changed formulae. Gates the auto-merge below.
+- **Auto-merge `bump-*` PRs with branch deletion** — see `.github/workflows/automerge.yml`. `workflow_run`-gated on test-bot success; squash + `--delete-branch`. Stops the stale-branch non-fast-forward failures that pile up when livecheck bump PRs go unmerged.
 
 ## Non-Obvious Constraints
 
