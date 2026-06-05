@@ -10,7 +10,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: Homebrew/actions/setup-homebrew@master
+      - uses: Homebrew/actions/setup-homebrew@main
       - uses: dawidd6/action-homebrew-bump-formula@v5
         with:
           token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}

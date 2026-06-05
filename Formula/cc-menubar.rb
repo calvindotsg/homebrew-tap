@@ -7,8 +7,8 @@ class CcMenubar < Formula
   sha256 "be31c686eeedc964eaa9164a88340617d6c0487a987871d6384e34a7a7ebdec3"
   license "MIT"
 
-  depends_on "python@3.13"
   depends_on macos: :sonoma
+  depends_on "python@3.13"
 
   resource "typer" do
     url "https://files.pythonhosted.org/packages/f5/24/cb09efec5cc954f7f9b930bf8279447d24618bb6758d4f6adf2574c41780/typer-0.24.1.tar.gz"
