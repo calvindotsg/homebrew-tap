@@ -1,0 +1,49 @@
+name: auto-merge bump PRs
+
+# Auto-merges livecheck's `bump-*` PRs once `brew test-bot` passes, then deletes
+# the branch. Deleting the branch is the fix for the daily non-fast-forward
+# failures: `brew bump-formula-pr` reuses the `bump-<formula>-<version>` branch
+# name, so a stale branch left by an unmerged PR makes every subsequent livecheck
+# run fail to push (and crash the action). Clearing it on merge keeps the queue
+# self-draining.
+on:
+  workflow_run:
+    workflows: ["brew test-bot"]
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    # Only same-repo bump branches whose test-bot run went green. Cross-repo
+    # (fork) PRs are skipped so a fork can't get itself auto-merged by naming
+    # its branch `bump-*`.
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'bump-')
+    steps:
+      - name: Merge the bump PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          info=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_BRANCH" \
+                   --state open --json number,isCrossRepository \
+                   --jq '.[0] | "\(.number) \(.isCrossRepository)"')
+          pr=${info%% *}
+          cross=${info##* }
+          if [ -z "$pr" ] || [ "$pr" = "null" ]; then
+            echo "No open PR for $HEAD_BRANCH; nothing to merge."
+            exit 0
+          fi
+          if [ "$cross" != "false" ]; then
+            echo "PR #$pr is from a fork; skipping auto-merge."
+            exit 0
+          fi
+          echo "Auto-merging PR #$pr ($HEAD_BRANCH)"
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash --delete-branch
