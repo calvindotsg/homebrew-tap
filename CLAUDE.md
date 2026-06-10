@@ -32,17 +32,17 @@ Automated via `update-formula.yml`. Triggered automatically by source repos on r
 
 ### Third-Party Formulas
 
-For formulas wrapping packages Calvin doesn't control (e.g., `codeburn`, `granola-cli`, `opensrc`), the `repository_dispatch` auto-bump flow is unavailable — there's no upstream release workflow to dispatch from. Instead, bumps flow through a tap-scoped **livecheck cron** defined in `.github/workflows/livecheck.yml` (daily 07:00 UTC) using [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula). Adding a new third-party formula = append its name to the `formula:` list in that workflow.
+For formulas wrapping packages Calvin doesn't control (e.g., `opensrc`), the `repository_dispatch` auto-bump flow is unavailable — there's no upstream release workflow to dispatch from. Instead, bumps flow through a tap-scoped **livecheck cron** defined in `.github/workflows/livecheck.yml` (daily 07:00 UTC) using [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula). Adding a new third-party formula = append its name to the `formula:` list in that workflow.
 
 The scope is deliberately limited to third-party formulas by an explicit list — Calvin-owned formulas route through `repository_dispatch` from their source repos, and including them here would race against those pushes.
 
 **Manual override** (if livecheck fails or to force a specific version):
 
     gh workflow run update-formula.yml \
-      -f formula=codeburn \
+      -f formula=cc-menubar \
       -f version=vX.Y.Z \
-      -f url='https://registry.npmjs.org/codeburn/-/codeburn-X.Y.Z.tgz' \
-      -f type=node \
+      -f url='https://github.com/calvindotsg/cc-menubar/archive/refs/tags/vX.Y.Z.tar.gz' \
+      -f type=python \
       -R calvindotsg/homebrew-tap
 
 See `## Reusable Patterns` (added in the docs-reusable-patterns PR) for the "scheduled livecheck cron" and "explicit third-party formula list" templates.
@@ -79,14 +79,14 @@ Formulas with a `service` block generate plists at `~/Library/LaunchAgents/homeb
 
 Templates in this tap worth copying/adapting into other Homebrew taps or formula repos. Each entry is a pointer + "use when" — full mechanics live in the referenced file.
 
-- **Node CLI formula (`std_npm_args`)** — see `Formula/codeburn.rb`, `Formula/granola-cli.rb`. Use for pure-JS CLIs published to npm. Do not substitute pnpm or yarn: Homebrew redirects `HOME` during the build sandbox so a pnpm global store doesn't persist, Cellar isolation defeats cross-formula dedup, and `std_npm_args` injects cache redirection plus `--ignore-scripts` and `--min-release-age=1` (24-hour supply-chain quarantine) — no equivalent helper exists for pnpm. For real disk savings, prefer the prebuilt-binary pattern below when upstream ships native binaries.
+- **Node CLI formula (`std_npm_args`)** — no live instance since `codeburn`/`granola-cli` were dropped (2026-06); recover a template from git history (`git log --full-history -- Formula/codeburn.rb`). Use for pure-JS CLIs published to npm. Do not substitute pnpm or yarn: Homebrew redirects `HOME` during the build sandbox so a pnpm global store doesn't persist, Cellar isolation defeats cross-formula dedup, and `std_npm_args` injects cache redirection plus `--ignore-scripts` and `--min-release-age=1` (24-hour supply-chain quarantine) — no equivalent helper exists for pnpm. For real disk savings, prefer the prebuilt-binary pattern below when upstream ships native binaries.
 - **Python virtualenv formula** — see `Formula/cc-menubar.rb` (SwiftBar plugin), `Formula/mac-upkeep.rb` (launchd service). Explicit `resource` stanzas required per `Language::Python::Virtualenv`; generate with `brew update-python-resources` or `poet -r`.
 - **Prebuilt binary from GitHub Releases** — see `Formula/opensrc.rb`. `on_arm`/`on_intel` + `bin.install <file> => <name>`. Use for Rust/Go CLIs where upstream ships native binaries and the npm-wrapper download-during-install would violate `brew audit`.
 - **Arch-specific cask** — see `Casks/firefoo.rb`. DMG with separate arm64/x64 builds.
 - **Service formula (launchd via `service do`)** — see `Formula/mac-upkeep.rb`. Cron DSL accepts only single ints per field (see Non-Obvious Constraints below).
 - **Auto-bump via source-repo dispatch** — see `.github/workflows/update-formula.yml` + source-repo `bump-tap` job pattern (`calvindotsg/mac-upkeep/.github/workflows/release.yml`). For Calvin-owned formulas.
 - **Scheduled livecheck cron (third-party)** — see `.github/workflows/livecheck.yml`. `dawidd6/action-homebrew-bump-formula@v5` with `livecheck: true`. Daily 07:00 UTC. For formulas whose source repos Calvin doesn't control.
-- **Explicit third-party `formula:` list in livecheck** — scope the cron to non-Calvin-owned formulas by enumerating them (`codeburn`, `granola-cli`, `opensrc`). Avoids races with the `repository_dispatch` path used by Calvin-owned formulas.
+- **Explicit third-party `formula:` list in livecheck** — scope the cron to non-Calvin-owned formulas by enumerating them (currently just `opensrc`). Avoids races with the `repository_dispatch` path used by Calvin-owned formulas.
 - **`brew test-bot` PR CI** — see `.github/workflows/tests.yml`. Canonical `tap-new` template (ubuntu + macOS matrix); builds only changed formulae. Gates the auto-merge below.
 - **Auto-merge `bump-*` PRs with branch deletion** — see `.github/workflows/automerge.yml`. `workflow_run`-gated on test-bot success; squash + `--delete-branch`. Stops the stale-branch non-fast-forward failures that pile up when livecheck bump PRs go unmerged.
 
