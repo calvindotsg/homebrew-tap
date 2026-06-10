@@ -16,7 +16,5 @@ jobs:
           token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
           no_fork: true
           formula: |
-            calvindotsg/tap/codeburn
-            calvindotsg/tap/granola-cli
             calvindotsg/tap/opensrc
           livecheck: true
