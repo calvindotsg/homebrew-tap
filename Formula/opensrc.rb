@@ -1,9 +1,9 @@
 class Opensrc < Formula
   desc "Fetch source code for packages to give coding agents deeper context"
   homepage "https://github.com/vercel-labs/opensrc"
-  url "https://github.com/vercel-labs/opensrc/releases/download/v0.7.2/opensrc-darwin-arm64"
-  version "0.7.2"
-  sha256 "fdc3f6cf8c36e6b9ed35a3004745381232ad2e0765b31286adf8d59546f75be3"
+  url "https://github.com/vercel-labs/opensrc/releases/download/v0.7.3/opensrc-darwin-arm64"
+  version "0.7.3"
+  sha256 "c10a60b758ef82de8991e69e773e64159086b5bb767f5248da778c8347949afc"
   license "Apache-2.0"
 
   livecheck do
