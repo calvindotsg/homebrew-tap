@@ -21,3 +21,4 @@ brew tap calvindotsg/tap
 | Cask | Description | Install |
 |------|-------------|---------|
 | [Firefoo](https://www.firefoo.com/) | GUI client for Firebase Firestore | `brew install --cask calvindotsg/tap/firefoo` |
+| [Littlebird](https://littlebird.ai/) | Context-aware AI assistant that reads on-screen text across apps | `brew install --cask calvindotsg/tap/littlebird` |

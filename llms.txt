@@ -1,6 +1,6 @@
 # calvindotsg/homebrew-tap
 
-> Personal Homebrew tap: formulas (Node CLI, Python venv, prebuilt binary, service) + cask + automated bump workflows.
+> Personal Homebrew tap: formulas (Node CLI, Python venv, prebuilt binary, service) + casks + automated bump workflows.
 
 ## Core
 
