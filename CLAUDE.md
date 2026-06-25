@@ -69,7 +69,7 @@ Manual trigger via Actions UI or CLI:
 
 Leave `version` empty to auto-detect via `brew livecheck`. The workflow computes arch-specific SHA256s automatically.
 
-Note: `update-cask.yml` currently hardcodes Firefoo's URL pattern. Generalize before adding more casks.
+Note: `update-cask.yml`'s SHA step hardcodes Firefoo's download-URL pattern, so it only supports **firefoo**. `littlebird` deliberately bypasses it — `auto_updates true` means the app self-updates, and `brew livecheck --cask` surfaces new versions for a human to act on. Generalize the SHA step (derive both arch URLs from the cask's own `url` stanza) before wiring a *non-auto-updating* cask into this workflow.
 
 ## Service Formulas
 

@@ -26,11 +26,15 @@ cask "littlebird" do
             quit:      "com.genos.littlebird"
 
   zap trash: [
+    "~/Library/Application Support/@littlebird",
     "~/Library/Application Support/Littlebird",
     "~/Library/Caches/@littlebirddesktop-updater",
+    "~/Library/Caches/com.genos.contextkit-cli",
     "~/Library/Caches/com.genos.littlebird",
     "~/Library/Caches/com.genos.littlebird.ShipIt",
+    "~/Library/HTTPStorages/com.genos.contextkit-cli",
     "~/Library/HTTPStorages/com.genos.littlebird",
+    "~/Library/Logs/@littlebird",
     "~/Library/Logs/Littlebird",
     "~/Library/Preferences/com.genos.littlebird.plist",
     "~/Library/Saved Application State/com.genos.littlebird.savedState",
