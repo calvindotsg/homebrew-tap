@@ -13,6 +13,7 @@ brew tap calvindotsg/tap
 | Formula | Description | Install |
 |---------|-------------|---------|
 | [cc-menubar](https://github.com/calvindotsg/cc-menubar) | Pace your quota — proactive forecasting for Claude Code Max | `brew install calvindotsg/tap/cc-menubar` |
+| [cloudflare-cf](https://blog.cloudflare.com/cf-cli-local-explorer/) (third-party) | Unified CLI for the Cloudflare API (DNS, zones, Workers, R2, KV) | `brew install calvindotsg/tap/cloudflare-cf` |
 | [mac-upkeep](https://github.com/calvindotsg/mac-upkeep) | Automated macOS maintenance CLI (TOML-driven, weekly scheduler) | `brew install calvindotsg/tap/mac-upkeep` |
 | [opensrc](https://github.com/vercel-labs/opensrc) (third-party) | Fetch source code for packages to give coding agents deeper context | `brew install calvindotsg/tap/opensrc` |
 
