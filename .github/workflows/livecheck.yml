@@ -17,4 +17,5 @@ jobs:
           no_fork: true
           formula: |
             calvindotsg/tap/opensrc
+            calvindotsg/tap/cloudflare-cf
           livecheck: true
