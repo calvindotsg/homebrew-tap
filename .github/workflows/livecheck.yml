@@ -41,6 +41,17 @@ jobs:
         run: |
           set -euo pipefail
           brew tap calvindotsg/tap
+          # Homebrew 6.0+ requires non-official taps to be trusted before it will LOAD their
+          # formulae/casks, and `brew tap` does NOT confer trust — only `brew trust` does
+          # (it writes ~/.homebrew/trust.json). The fully-qualified names used below would
+          # actually pass without this, because Homebrew treats a tap named in ARGV as explicit
+          # consent. This line is belt-and-braces: it keeps the job working if a future edit
+          # uses a bare token or a bulk command, both of which DO enforce trust (bulk ones fail
+          # silently — "Skipping calvindotsg/tap because it is not trusted" — which would leave
+          # casks quietly un-bumped). The `bump` job above already does this via
+          # dawidd6/action-homebrew-bump-formula ("==> Trusting calvindotsg/tap tap...").
+          # Idempotent: prints "Already trusted tap" and exits 0.
+          brew trust --tap calvindotsg/tap
           for cask in tmog; do
             latest=$(brew livecheck --cask --newer-only --json "calvindotsg/tap/${cask}" \
                        | jq -r '.[0].version.latest // empty')

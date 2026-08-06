@@ -107,6 +107,13 @@ Templates in this tap worth copying/adapting into other Homebrew taps or formula
 
 ## Non-Obvious Constraints
 
+- **Homebrew 6.0+ tap trust — enforcement depends on how you NAME things.** `HOMEBREW_REQUIRE_TAP_TRUST` defaults to true and `brew tap` does **not** confer trust; only `brew trust` does, writing `~/.homebrew/trust.json`. But `Homebrew::Trust.explicitly_allowed?` (`trust.rb`) inspects **`ARGV`**, so behaviour splits three ways — verified empirically 2026-08-06 by untrusting the tap locally:
+  - **Fully-qualified → allowed, no trust needed.** `brew install calvindotsg/tap/foo`, `brew livecheck --cask calvindotsg/tap/tmog`. A tap named on the command line counts as explicit consent. This is why every workflow here kept working, and why testing with qualified names *cannot* reproduce a trust failure — a real trap when verifying this.
+  - **Bare token → hard error.** `brew info --cask firefoo` → `Error: Refusing to load cask calvindotsg/tap/firefoo from untrusted tap`.
+  - **Bulk evaluation → silently skipped.** `brew upgrade`, `brew outdated`, `brew livecheck` with no target print only `Warning: Skipping calvindotsg/tap because it is not trusted` and carry on, so the tap's packages quietly stop updating. This is the dangerous mode — a warning, not a failure. `brew doctor` also lists untrusted taps.
+  - **CI**: workflow steps here use qualified names and so do not strictly require trust, but both cask jobs call `brew trust --tap calvindotsg/tap` (idempotent, exit 0) so a future bare-token or bulk command cannot reintroduce the silent-skip mode. The `bump` job gets this free — `dawidd6/action-homebrew-bump-formula` trusts the tap itself (`==> Trusting calvindotsg/tap tap...` in its logs).
+  - **Brewfiles** declare it inline with `tap "calvindotsg/tap", trusted: true` — needed because bare `cask "firefoo"` entries are not tap-qualified.
+  - Do **not** reach for `HOMEBREW_NO_REQUIRE_TAP_TRUST` — `man brew` says it "is not recommended and will be removed in a later release."
 - Formula `depends_on` only works with other formulas, not casks.
 - `sha256` is required for stable releases.
 - Cron in service DSL only supports single integer values per field.
