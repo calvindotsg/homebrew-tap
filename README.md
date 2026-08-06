@@ -6,6 +6,26 @@ Personal Homebrew tap for calvindotsg.
 
 ```bash
 brew tap calvindotsg/tap
+brew trust --tap calvindotsg/tap
+```
+
+The second command matters on **Homebrew 6.0 and later**, where non-official taps must be
+trusted before Homebrew will load them — and `brew tap` does not confer trust.
+
+The fully-qualified install commands in the tables below (`brew install calvindotsg/tap/…`)
+work even without it, because naming the tap on the command line counts as explicit consent.
+Trust matters for everything else:
+
+- `brew install cc-menubar` (bare name) → `Error: Refusing to load … from untrusted tap`
+- `brew upgrade`, `brew outdated`, `brew livecheck` → **silently skip this tap** with only a
+  `Warning: Skipping calvindotsg/tap because it is not trusted`, so packages quietly stop
+  updating. This is the failure worth avoiding.
+
+`brew doctor` lists untrusted taps if you are unsure. Installing via a `Brewfile`? Declare it
+inline and skip `brew trust` entirely:
+
+```ruby
+tap "calvindotsg/tap", trusted: true
 ```
 
 ## Formulae

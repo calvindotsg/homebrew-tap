@@ -36,6 +36,11 @@ jobs:
             VER="${VER#v}"
           else
             brew tap calvindotsg/tap "$(pwd)"
+            # Homebrew 6.0+ will not load casks from an untrusted non-official tap, and
+            # `brew tap` does not confer trust. The fully-qualified name below would pass
+            # regardless (a tap named in ARGV counts as consent), but trusting explicitly
+            # keeps this robust against bare-token or bulk commands, which do enforce it.
+            brew trust --tap calvindotsg/tap
             VER=$(brew livecheck --cask --newer-only --json "calvindotsg/tap/$CASK" \
               | jq -r '.[0].version.latest // empty')
             [ -z "$VER" ] && echo "Already up to date" && exit 0
