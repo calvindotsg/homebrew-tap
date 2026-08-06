@@ -7,7 +7,8 @@ Formula/                        Homebrew formula definitions (.rb)
 Casks/                          Homebrew cask definitions (.rb)
 .github/workflows/
   update-formula.yml            Automated formula update (dispatch + manual)
-  update-cask.yml               Manual cask update (dispatch, with commented-out schedule)
+  update-cask.yml               Manual cask update (dispatch; firefoo-only, see below)
+  livecheck.yml                 Daily cron: `bump` (formulae) + `bump-casks` (non-auto-updating casks)
 ```
 
 Tap name `calvindotsg/tap` maps to this repo via Homebrew's `homebrew-` prefix convention.
@@ -55,11 +56,12 @@ See `## Reusable Patterns` (added in the docs-reusable-patterns PR) for the "sch
 
 ## Adding a Cask
 
-1. Compute sha256 for each architecture: `curl -sL "<dmg-url>" | shasum -a 256`
+1. Compute sha256 for each architecture: `curl -sL "<dmg-url>" | shasum -a 256`. If upstream publishes a manifest (see the release-manifest pattern below), take its `sha256` and cross-check against your own download.
 2. Create `Casks/<name>.rb` following existing casks as template
-3. Test: `brew audit --cask --new calvindotsg/tap/<name>` and `brew livecheck --cask calvindotsg/tap/<name>`
-4. Install test: `brew install --cask calvindotsg/tap/<name>`
-5. Commit and push
+3. Copy it into Homebrew's own tap clone first — `cp Casks/<name>.rb "$(brew --repo calvindotsg/tap)/Casks/"` — since that is a *different directory* from this git checkout and `brew audit` on a loose path is disabled
+4. Test: `brew style`, `brew audit --cask`, `brew livecheck --cask --debug`, then `brew fetch --cask calvindotsg/tap/<name>` (downloads and verifies the pinned sha256 end-to-end). Omit `--new` — it runs homebrew-cask notability checks that are irrelevant to a personal tap
+5. Remove the untracked test copy before the post-merge `git -C "$(brew --repo calvindotsg/tap)" pull`, or that pull conflicts
+6. Commit and push; install via `brew install --cask` after merge
 
 ## Updating a Cask Version
 
@@ -69,7 +71,18 @@ Manual trigger via Actions UI or CLI:
 
 Leave `version` empty to auto-detect via `brew livecheck`. The workflow computes arch-specific SHA256s automatically.
 
-Note: `update-cask.yml`'s SHA step hardcodes Firefoo's download-URL pattern, so it only supports **firefoo**. `littlebird` deliberately bypasses it — `auto_updates true` means the app self-updates, and `brew livecheck --cask` surfaces new versions for a human to act on. Generalize the SHA step (derive both arch URLs from the cask's own `url` stanza) before wiring a *non-auto-updating* cask into this workflow.
+Note: `update-cask.yml`'s SHA step hardcodes Firefoo's download-URL pattern, so it only supports **firefoo**. `littlebird` deliberately bypasses it — `auto_updates true` means the app self-updates, and `brew livecheck --cask` surfaces new versions for a human to act on.
+
+**Non-auto-updating casks do NOT go through this workflow.** They are bumped automatically by the `bump-casks` job in `livecheck.yml` (see below), which derives everything from the cask's own `url` and `livecheck` stanzas. This supersedes the previous instruction to generalize `update-cask.yml`'s SHA step first — that is no longer a prerequisite. `update-cask.yml` remains a firefoo-only manual escape hatch.
+
+### Cask auto-bump (`bump-casks` job)
+
+Casks cannot ride the `bump` job: [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula) is **formula-only** — it has no `cask:` input. So `livecheck.yml` carries a second job, `bump-casks`, running `brew livecheck --cask --newer-only --json` into `brew bump-cask-pr`.
+
+- **Runs on `macos-latest`** because Homebrew has no cask support on Linux at all. Public repo, so the runner minutes are free.
+- **Only casks without `auto_updates true`** belong in its `for cask in …` list. `firefoo` and `littlebird` self-update, so Homebrew deliberately does not own their upgrades; `tmog` cannot self-update, so it does. Adding a new non-auto-updating cask = append its token to that list.
+- `brew bump-cask-pr` opens `bump-<cask>-<version>` branches, which already satisfy `automerge.yml`'s `startsWith(head_branch, 'bump-')` gate — **no change to `automerge.yml` is needed**.
+- When a cask is already current, `--newer-only` returns `[]`, `jq` yields empty, and the loop logs "already current" and exits 0.
 
 ## Service Formulas
 
@@ -83,6 +96,8 @@ Templates in this tap worth copying/adapting into other Homebrew taps or formula
 - **Python virtualenv formula** — see `Formula/cc-menubar.rb` (SwiftBar plugin), `Formula/mac-upkeep.rb` (launchd service). Explicit `resource` stanzas required per `Language::Python::Virtualenv`; generate with `brew update-python-resources` or `poet -r`.
 - **Prebuilt binary from GitHub Releases** — see `Formula/opensrc.rb`. `on_arm`/`on_intel` + `bin.install <file> => <name>`. Use for Rust/Go CLIs where upstream ships native binaries and the npm-wrapper download-during-install would violate `brew audit`.
 - **Arch-specific cask** — see `Casks/firefoo.rb`. DMG with separate arm64/x64 builds.
+- **Release-manifest cask (`:json` livecheck + `version,build`)** — see `Casks/tmog.rb`. Upstream publishes `release.json` carrying `version`, `build`, `sha256` and a **versioned** artifact path alongside a rolling unversioned one. Pin the *versioned* URL (immutable — no checksum drift when upstream re-publishes), encode `version "<version>,<build>"` and rebuild the filename with `version.csv.first` / `.csv.second`, and have the `livecheck` block return the same composite so comparisons line up. Use when a vendor ships its own update manifest instead of a Sparkle appcast or GitHub releases. **Finding the manifest:** don't guess URL paths — `strings -a "<App>.app/Contents/MacOS/<bin>" | grep -oiE 'https?://[a-z0-9./_-]+'`. A "Check for Updates…" menu item proves an endpoint exists; TMOG's sat under `/downloads/`, which root-level path guessing missed entirely.
+- **Deciding `auto_updates`** — it is a factual claim that the app *installs* updates itself, not that it checks. `otool -L` for a linked Sparkle/Squirrel framework, `Contents/Resources/app-update.yml` for electron-updater, and `strings` for download/install/restart wording. TMOG has a "Check for Updates…" menu item but only check-and-report strings, so it omits `auto_updates` and Homebrew owns its upgrades. Getting this wrong is doubly bad: the claim is false *and* `brew upgrade` silently skips the cask.
 - **Service formula (launchd via `service do`)** — see `Formula/mac-upkeep.rb`. Cron DSL accepts only single ints per field (see Non-Obvious Constraints below).
 - **Auto-bump via source-repo dispatch** — see `.github/workflows/update-formula.yml` + source-repo `bump-tap` job pattern (`calvindotsg/mac-upkeep/.github/workflows/release.yml`). For Calvin-owned formulas.
 - **Scheduled livecheck cron (third-party)** — see `.github/workflows/livecheck.yml`. `dawidd6/action-homebrew-bump-formula@v5` with `livecheck: true`. Daily 07:00 UTC. For formulas whose source repos Calvin doesn't control.

@@ -19,3 +19,36 @@ jobs:
             calvindotsg/tap/opensrc
             calvindotsg/tap/cloudflare-cf
           livecheck: true
+
+  # Casks need a separate job: dawidd6/action-homebrew-bump-formula is formula-only
+  # (no `cask:` input), so the job above can never bump a cask. Runs on macOS because
+  # Homebrew has no cask support on Linux at all — not a livecheck-strategy limitation.
+  #
+  # Only casks WITHOUT `auto_updates true` belong here. firefoo and littlebird self-update,
+  # so Homebrew deliberately doesn't own their upgrades; tmog cannot, so it does.
+  #
+  # `brew bump-cask-pr` opens `bump-<cask>-<version>` branches, which already satisfy
+  # automerge.yml's `startsWith(head_branch, 'bump-')` gate — no change needed there.
+  bump-casks:
+    runs-on: macos-latest
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@main
+      - name: Bump outdated casks
+        env:
+          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+          HOMEBREW_NO_INSTALL_FROM_API: 1
+        run: |
+          set -euo pipefail
+          brew tap calvindotsg/tap
+          for cask in tmog; do
+            latest=$(brew livecheck --cask --newer-only --json "calvindotsg/tap/${cask}" \
+                       | jq -r '.[0].version.latest // empty')
+            if [ -z "${latest}" ]; then
+              echo "${cask}: already current"
+              continue
+            fi
+            echo "${cask}: bumping to ${latest}"
+            brew bump-cask-pr --no-fork --no-browse --version "${latest}" \
+              "calvindotsg/tap/${cask}"
+          done
