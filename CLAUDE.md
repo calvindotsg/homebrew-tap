@@ -40,9 +40,9 @@ The scope is deliberately limited to third-party formulas by an explicit list â€
 **Manual override** (if livecheck fails or to force a specific version):
 
     gh workflow run update-formula.yml \
-      -f formula=cc-menubar \
+      -f formula=mac-upkeep \
       -f version=vX.Y.Z \
-      -f url='https://github.com/calvindotsg/cc-menubar/archive/refs/tags/vX.Y.Z.tar.gz' \
+      -f url='https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/vX.Y.Z.tar.gz' \
       -f type=python \
       -R calvindotsg/homebrew-tap
 
