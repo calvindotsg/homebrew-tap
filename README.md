@@ -48,4 +48,4 @@ tap "calvindotsg/tap", trusted: true
 
 | Package | Status |
 |---------|--------|
-| [cc-menubar](https://github.com/calvindotsg/cc-menubar) | Deprecated 2026-08-16 — repository archived. Still on [PyPI](https://pypi.org/project/cc-menubar/) (`uv tool install cc-menubar`). Scheduled for removal from this tap after 2026-11-16. |
+| [cc-menubar](https://github.com/calvindotsg/cc-menubar) | Deprecated 2026-08-16 — repository archived. Homebrew disables it automatically on **2027-08-16**; it is removed from this tap after that. Still installable from [PyPI](https://pypi.org/project/cc-menubar/) (`uv tool install cc-menubar`). |
