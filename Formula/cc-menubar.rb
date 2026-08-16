@@ -7,9 +7,10 @@ class CcMenubar < Formula
   sha256 "be31c686eeedc964eaa9164a88340617d6c0487a987871d6384e34a7a7ebdec3"
   license "MIT"
 
-  # Upstream repository archived 2026-08-16. Per Homebrew's lifecycle guidance an
-  # unpopular formula may be removed three months after its deprecation date; until
-  # then `brew upgrade` warns instead of failing for anyone who already installed it.
+  # Upstream repository archived 2026-08-16. Deprecating rather than deleting keeps
+  # `brew upgrade` warning instead of failing for anyone who already installed it.
+  # With no explicit `disable!` date Homebrew disables this automatically one year
+  # after the deprecation date (2027-08-16); removal from the tap follows that.
   # The tool remains available from PyPI (`uv tool install cc-menubar`).
   deprecate! date: "2026-08-16", because: :repo_archived
 
