@@ -11,6 +11,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: Homebrew/actions/setup-homebrew@main
+
+      # Needed by pymarkdownlnt only. `brew bump-formula-pr` always calls
+      # `PyPI.update_python_resources!` to regenerate resource stanzas, and that shells out
+      # to `<python@3.13 keg>/bin/python -m pip install --dry-run`. `formula_opt_libexec`
+      # builds that path without checking the keg exists, and
+      # dawidd6/action-homebrew-bump-formula never passes `--install-dependencies` — so on a
+      # bare ubuntu runner the pip call fails and bump-formula-pr odies with "Unable to
+      # determine dependencies ... update the resources manually". The action rescues
+      # per-formula but re-raises at the end, taking the whole job red.
+      #
+      # The other two formulae here have no Python resources, which is why this was not
+      # needed before. Keep in step with `depends_on "python@3.x"` in
+      # Formula/pymarkdownlnt.rb.
+      - name: Install python@3.13 for Python resource regeneration
+        run: brew install python@3.13
+
       - uses: dawidd6/action-homebrew-bump-formula@v5
         with:
           token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
@@ -18,6 +34,7 @@ jobs:
           formula: |
             calvindotsg/tap/opensrc
             calvindotsg/tap/cloudflare-cf
+            calvindotsg/tap/pymarkdownlnt
           livecheck: true
 
   # Casks need a separate job: dawidd6/action-homebrew-bump-formula is formula-only
