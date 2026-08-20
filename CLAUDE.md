@@ -9,7 +9,8 @@ Casks/                          Homebrew cask definitions (.rb)
   update-formula.yml            Automated formula update (dispatch + manual)
   update-cask.yml               Manual cask update (dispatch; firefoo-only, see below)
   livecheck.yml                 Daily cron: `bump` (non-Python formulae) + `bump-python`
-                                → `bump-python-pr` + `bump-casks` (non-auto-updating casks)
+                                → `bump-python-pr`
+  livecheck-casks.yml           Daily cron: `bump-casks` (non-auto-updating casks)
 .github/dependabot.yml          Weekly refresh of the workflows' action SHA pins
 ```
 
@@ -88,9 +89,9 @@ Note: `update-cask.yml` now **fails closed for any cask other than firefoo**, be
 
 **Non-auto-updating casks do NOT go through this workflow.** They are bumped automatically by the `bump-casks` job in `livecheck.yml` (see below), which derives everything from the cask's own `url` and `livecheck` stanzas. This supersedes the previous instruction to generalize `update-cask.yml`'s SHA step first — that is no longer a prerequisite. `update-cask.yml` remains a firefoo-only manual escape hatch.
 
-### Cask auto-bump (`bump-casks` job)
+### Cask auto-bump (`livecheck-casks.yml`)
 
-Casks cannot ride the `bump` job: [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula) is **formula-only** — it has no `cask:` input. So `livecheck.yml` carries a separate job, `bump-casks`, running `brew livecheck --cask --newer-only --json` into `brew bump-cask-pr --write-only --commit`, verifying the downloaded artifact, and only then pushing the branch and opening the PR.
+Casks cannot ride the `bump` job: [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula) is **formula-only** — it has no `cask:` input. It lives in its own workflow file rather than as a fourth job in `livecheck.yml`, deliberately: the formula lane goes red for unrelated reasons and on a different cadence (an `opensrc` release makes `bump` red until a human updates the Intel stanza), and a chronically-red formula lane is the worst possible background against which to notice a *first-ever* red cask lane — which is the only artifact verification this tap has. Separate workflows get separate run statuses and notifications. It runs `bump-casks`, running `brew livecheck --cask --newer-only --json` into `brew bump-cask-pr --write-only --commit`, verifying the downloaded artifact, and only then pushing the branch and opening the PR.
 
 - **Runs on `macos-latest`** because Homebrew has no cask support on Linux at all. Public repo, so the runner minutes are free.
 - **Only casks without `auto_updates true`** belong in its `for cask in …` list. `firefoo` and `littlebird` self-update, so Homebrew deliberately does not own their upgrades; `tmog` cannot self-update, so it does. Adding a new non-auto-updating cask = append its token to that list **and** add its Developer ID Team Identifier to `expected_team_for` in the verification step (`codesign -dv <app> 2>&1 | sed -n 's/^TeamIdentifier=//p'` to read it). A cask with no pinned Team ID fails the job rather than bumping unverified.
@@ -119,7 +120,7 @@ Formulas with a `service` block generate plists at `~/Library/LaunchAgents/homeb
 
 Templates in this tap worth copying/adapting into other Homebrew taps or formula repos. Each entry is a pointer + "use when" — full mechanics live in the referenced file.
 
-- **Node CLI formula (`std_npm_args`)** — see `Formula/cloudflare-cf.rb`. Use for pure-JS CLIs published to npm. Do not substitute pnpm or yarn: Homebrew redirects `HOME` during the build sandbox so a pnpm global store doesn't persist, Cellar isolation defeats cross-formula dedup, and `std_npm_args` injects cache redirection plus `--ignore-scripts` and `--min-release-age=1` (24-hour supply-chain quarantine) — no equivalent helper exists for pnpm. For real disk savings, prefer the prebuilt-binary pattern below when upstream ships native binaries.
+- **Node CLI formula (`std_npm_args`)** — see `Formula/cloudflare-cf.rb`. Use for pure-JS CLIs published to npm. Do not substitute pnpm or yarn: Homebrew redirects `HOME` during the build sandbox so a pnpm global store doesn't persist, Cellar isolation defeats cross-formula dedup, and `std_npm_args` injects cache redirection plus `--ignore-scripts` and `--min-release-age=1` — no equivalent helper exists for pnpm. **Know what that cooldown does and does not cover:** `--min-release-age` is a *registry-resolution* flag, and `Language::Node.std_npm_install_args` installs from a local tarball repacked out of Homebrew's own download stage (`#{Dir.pwd}/#{pack}`), so the formula's own package is never registry-resolved. The 24-hour quarantine protects its **dependencies**, not the primary artifact — do not cite it as blanket cover. Relatedly, do not call `generate_completions_from_executable` on a package you would not run unattended: it reaches `Utils.safe_popen_read` and executes the freshly downloaded binary inside `def install`. See `Formula/cloudflare-cf.rb` for a case where that was dropped and why. For real disk savings, prefer the prebuilt-binary pattern below when upstream ships native binaries.
 - **Python virtualenv formula** — see `Formula/cc-menubar.rb` (SwiftBar plugin), `Formula/mac-upkeep.rb` (launchd service). Explicit `resource` stanzas required per `Language::Python::Virtualenv`; generate with `brew update-python-resources` or `poet -r`.
 - **Prebuilt binary from GitHub Releases** — see `Formula/opensrc.rb`. `on_arm`/`on_intel` + `bin.install <file> => <name>`. Use for Rust/Go CLIs where upstream ships native binaries and the npm-wrapper download-during-install would violate `brew audit`.
 - **Arch-specific cask** — see `Casks/firefoo.rb`. DMG with separate arm64/x64 builds.

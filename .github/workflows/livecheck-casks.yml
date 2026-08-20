@@ -1,0 +1,253 @@
+name: livecheck casks
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+# Deliberately a separate workflow from livecheck.yml rather than another job in
+# it. The formula lane and the cask lane fail for unrelated reasons and on
+# different cadences — in particular an `opensrc` release makes `bump` go red and
+# stay red until a human updates the Intel stanza (see the arch-consistency job in
+# tests.yml). Sharing one workflow would make a chronically-red formula lane the
+# background against which a FIRST-EVER red cask lane has to be noticed, and the
+# cask lane is the only artifact-verification this tap has. Separate workflows get
+# separate run statuses and separate notifications.
+
+# Every write is made with the tap PAT, so the ambient GITHUB_TOKEN needs no
+# scopes. Must also be set per job: setup-homebrew copies `github.token` into
+# HOMEBREW_GITHUB_API_TOKEN for the whole job.
+permissions: {}
+
+# Its own group, not livecheck's: cask branches (`bump-<cask>-…`) never collide
+# with formula branches, so there is nothing to serialise between the two lanes.
+concurrency:
+  group: livecheck-casks
+  cancel-in-progress: false
+
+jobs:
+  # Casks need a separate job: dawidd6/action-homebrew-bump-formula is formula-only
+  # (no `cask:` input), so the jobs above can never bump a cask. Runs on macOS because
+  # Homebrew has no cask support on Linux at all — not a livecheck-strategy limitation.
+  #
+  # Only casks WITHOUT `auto_updates true` belong here. firefoo and littlebird self-update,
+  # so Homebrew deliberately doesn't own their upgrades; tmog cannot, so it does.
+  #
+  # `brew test-bot` has no cask module at all — its library holds only formulae*.rb and
+  # tap_syntax.rb — so a Casks/-only PR is style-checked and nothing more: no download, no
+  # checksum recomputation, no URL resolution. A human reviewer cannot close that gap
+  # either, because the diff is a version string plus a digest recomputed from the same
+  # vendor response that served the file. The digest attests that the bytes have not
+  # changed since Homebrew fetched them minutes earlier — not that they are the bytes the
+  # vendor meant to ship. The signing-identity check below is the part a redirected or
+  # tampered download cannot forge, so it runs before any PR is opened.
+  bump-casks:
+    runs-on: macos-latest
+    # Same reason as bump-python: setup-homebrew copies `github.token` into
+    # HOMEBREW_GITHUB_API_TOKEN for every later step, including the one that mounts
+    # vendor-controlled media, so keep it powerless. The steps that need a
+    # credential name the PAT explicitly.
+    #
+    # Not split across jobs the way bump-python is: nothing here executes upstream
+    # code. The DMG is downloaded, hashed and read-only mounted, never run. The
+    # residual is the filesystem driver parsing an untrusted image, which a job
+    # boundary would not remove either.
+    permissions: {}
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
+
+      - name: Write and commit outdated cask bumps
+        id: bump
+        shell: bash
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+          HOMEBREW_NO_INSTALL_FROM_API: 1
+        run: |
+          set -euo pipefail
+          brew developer on
+          brew tap calvindotsg/tap
+          # Homebrew 6.0+ requires non-official taps to be trusted before it will LOAD their
+          # formulae/casks, and `brew tap` does NOT confer trust — only `brew trust` does
+          # (it writes ~/.homebrew/trust.json). The fully-qualified names used below would
+          # actually pass without this, because Homebrew treats a tap named in ARGV as explicit
+          # consent. This line is belt-and-braces: it keeps the job working if a future edit
+          # uses a bare token or a bulk command, both of which DO enforce trust (bulk ones fail
+          # silently — "Skipping calvindotsg/tap because it is not trusted" — which would leave
+          # casks quietly un-bumped). Idempotent: prints "Already trusted tap" and exits 0.
+          brew trust --tap calvindotsg/tap
+
+          tap_dir=$(brew --repo calvindotsg/tap)
+          base=$(git -C "$tap_dir" rev-parse HEAD)
+          : > "${RUNNER_TEMP}/bumped.tsv"
+
+          for cask in tmog; do
+            latest=$(brew livecheck --cask --newer-only --json "calvindotsg/tap/${cask}" \
+                       | jq -r '.[0].version.latest // empty')
+            if [ -z "${latest}" ]; then
+              echo "${cask}: already current"
+              continue
+            fi
+            echo "${cask}: bumping to ${latest}"
+            # Reset first so each cask's branch carries exactly one commit on top of
+            # main, even when several casks bump in the same run.
+            git -C "$tap_dir" reset --hard "$base"
+            # --write-only --commit writes and commits but opens nothing: the PR
+            # waits until the artifact check below has passed.
+            brew bump-cask-pr --write-only --commit --no-browse \
+              --version "${latest}" "calvindotsg/tap/${cask}"
+            sha=$(git -C "$tap_dir" rev-parse HEAD)
+            printf '%s\t%s\t%s\n' "${cask}" "${latest}" "${sha}" >> "${RUNNER_TEMP}/bumped.tsv"
+          done
+
+          if [ -s "${RUNNER_TEMP}/bumped.tsv" ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify the signing identity of each bumped artifact
+        # No secret in scope, and the job token has no permissions: this step
+        # downloads and mounts vendor-controlled media. A cask whose Developer ID
+        # changed must never reach a PR.
+        if: steps.bump.outputs.any == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tap_dir=$(brew --repo calvindotsg/tap)
+
+          # Pinned Apple Developer ID Team Identifier per cask. A cask with no entry
+          # here fails closed, so adding a cask to the loop above without pinning its
+          # signing identity cannot silently skip verification.
+          expected_team_for() {
+            case "$1" in
+              tmog) echo "25BPDA4NQ3" ;;  # Developer ID Application: David Plummer
+              *)    echo "" ;;
+            esac
+          }
+
+          # Read on fd 3 so brew/codesign/hdiutil cannot swallow the remaining lines.
+          while IFS=$'\t' read -r cask version sha <&3; do
+            expected=$(expected_team_for "$cask")
+            if [ -z "$expected" ]; then
+              echo "::error::${cask}: no pinned Team ID; refusing to bump unverified."
+              exit 1
+            fi
+
+            # The bump loop resets the tap clone before each cask, so after it the
+            # working tree holds only the last one. `brew fetch` and `brew info`
+            # resolve a tap-qualified cask off disk, so check out this cask's own
+            # commit first or every cask but the last is verified against its
+            # pre-bump artifact.
+            git -C "$tap_dir" reset --hard "$sha"
+
+            brew fetch --cask --force "calvindotsg/tap/${cask}"
+            dmg=$(brew --cache --cask "calvindotsg/tap/${cask}")
+
+            # Mount the way Homebrew itself mounts, not the way that is convenient.
+            # UnpackStrategy::Dmg#mount uses `-mountrandom`, reads EVERY entry in
+            # the plist's `system-entities`, and extract_to_dir merges all of those
+            # volumes into one tree before the `app` stanza is resolved against it.
+            # A single `-mountpoint` attach sees one volume, so a multi-volume image
+            # could carry the bundle that actually installs on a volume this check
+            # never looked at. Enumerate them all and search the union.
+            mnt_root="${RUNNER_TEMP}/mnt-${cask}"
+            mkdir -p "$mnt_root"
+            mounts=$(hdiutil attach -plist -nobrowse -readonly -mountrandom "$mnt_root" "$dmg" \
+                       | plutil -convert json -o - - \
+                       | jq -r '.["system-entities"][]? | .["mount-point"] // empty')
+            detach_all() {
+              while IFS= read -r m; do
+                [ -n "$m" ] && hdiutil detach -quiet "$m" 2>/dev/null || true
+              done <<< "$mounts"
+            }
+            if [ -z "$mounts" ]; then
+              echo "::error::${cask}: no mountable volume in the downloaded image."
+              exit 1
+            fi
+
+            # Verify the bundle the cask actually installs, named by its own `app`
+            # stanza — not whichever .app the image happens to list first. Signing is
+            # a property of the bundle, not of its path, so a renamed copy of the
+            # vendor's genuine app passes every check below while `app` installs a
+            # different one; picking by find order would verify the decoy.
+            app_rel=$(brew info --json=v2 --cask "calvindotsg/tap/${cask}" \
+                        | jq -r '[.casks[0].artifacts[] | .app[]? | select(type == "string")][0] // empty')
+            if [ -z "$app_rel" ]; then
+              detach_all
+              echo "::error::${cask}: cask declares no app stanza; cannot verify."
+              exit 1
+            fi
+
+            # Homebrew merges the volumes, so the same relative path appearing on
+            # two of them is ambiguous about which one wins. Refuse rather than guess.
+            app=""
+            hits=0
+            while IFS= read -r m; do
+              [ -n "$m" ] || continue
+              if [ -d "${m}/${app_rel}" ]; then
+                app="${m}/${app_rel}"
+                hits=$((hits + 1))
+              fi
+            done <<< "$mounts"
+            if [ "$hits" -eq 0 ]; then
+              detach_all
+              echo "::error::${cask}: no volume in the image contains '${app_rel}', which is what the cask installs."
+              exit 1
+            fi
+            if [ "$hits" -gt 1 ]; then
+              detach_all
+              echo "::error::${cask}: '${app_rel}' appears on ${hits} volumes; refusing to guess which one installs."
+              exit 1
+            fi
+
+            team=""
+            ok=1
+            codesign --verify --strict --deep "$app" || ok=0
+            spctl -a -t open --context context:primary-signature "$app" || ok=0
+            # `|| true` so an unsigned bundle reaches the explicit comparison below
+            # rather than aborting the step with no explanation.
+            team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1 || true)
+            detach_all
+
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::${cask} ${version}: code signature or notarization check failed."
+              exit 1
+            fi
+            if [ "$team" != "$expected" ]; then
+              echo "::error::${cask} ${version}: signing Team ID is '${team}', expected '${expected}'."
+              exit 1
+            fi
+            echo "${cask} ${version}: signed by ${team} and notarized."
+          done 3< "${RUNNER_TEMP}/bumped.tsv"
+
+      - name: Push the commits and open the PRs
+        if: steps.bump.outputs.any == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+        run: |
+          set -euo pipefail
+          tap_dir=$(brew --repo calvindotsg/tap)
+          cd "$tap_dir"
+          if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+            git fetch --unshallow origin
+          fi
+
+          # Read on fd 3 so git/gh cannot swallow the remaining lines.
+          while IFS=$'\t' read -r cask version sha <&3; do
+            # Cask versions can carry characters that are not valid in a ref name
+            # (tmog's is "<version>,<build>"), so normalise before using one.
+            safe=$(printf '%s' "$version" | tr -c 'A-Za-z0-9._-' '-')
+            branch="bump-${cask}-${safe}"
+            if git ls-remote --exit-code --heads \
+                 "https://github.com/${GITHUB_REPOSITORY}" "$branch" >/dev/null 2>&1; then
+              # ::warning:: so a stuck cask bump PR is visible rather than making
+              # this job look healthy forever. Does not change the exit status.
+              echo "::warning::${cask}: branch $branch already exists upstream — an earlier bump PR is still open. Not re-pushing."
+              continue
+            fi
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" \
+              "${sha}:refs/heads/${branch}"
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+              --title "${cask} ${version}" \
+              --body "Automated cask bump by the livecheck cron. Artifact code signature, notarization and pinned Developer ID Team Identifier were verified before this PR was opened."
+          done 3< "${RUNNER_TEMP}/bumped.tsv"
