@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
 
-      - uses: dawidd6/action-homebrew-bump-formula@3428a0601bba3173ec0bdcc945be23fa27aa4c31 # v5
+      - uses: dawidd6/action-homebrew-bump-formula@a0e064e08103c01870c6d1b05168d1b726aab119 # v8
         with:
           token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
           no_fork: true
