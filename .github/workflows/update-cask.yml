@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       cask:
-        description: "Cask name (without .rb)"
+        description: "Cask name (without .rb) — firefoo only"
         required: true
         default: firefoo
       version:
@@ -26,14 +26,43 @@ jobs:
     env:
       CASK: ${{ inputs.cask }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # The Compute SHA256 step below hardcodes Firefoo's release-asset URL
+      # pattern, so this workflow only ever produces a correct result for
+      # firefoo. Fail closed rather than writing a checksum of a 404 body into
+      # some other cask. Non-auto-updating casks are bumped by livecheck.yml's
+      # bump-casks job, which derives everything from the cask's own stanzas.
+      - name: Validate inputs
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$CASK" != "firefoo" ]; then
+            echo "::error::this workflow only supports the firefoo cask; use livecheck.yml for the others"
+            exit 1
+          fi
+          test -f "Casks/$CASK.rb" || { echo "::error::no such cask in this tap"; exit 1; }
+          if [ -n "$INPUT_VERSION" ]; then
+            version_re='^v?[0-9][A-Za-z0-9._-]*$'
+            [[ "$INPUT_VERSION" =~ $version_re ]] \
+              || { echo "::error::version has an unexpected shape"; exit 1; }
+          fi
 
       - name: Detect version
         id: version
+        shell: bash
+        # Passed through env rather than interpolated into the script body, so the
+        # value is data to the shell instead of source text.
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VER="${{ inputs.version }}"
-            VER="${VER#v}"
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            VER="${INPUT_VERSION#v}"
           else
             brew tap calvindotsg/tap "$(pwd)"
             # Homebrew 6.0+ will not load casks from an untrusted non-official tap, and
@@ -43,46 +72,88 @@ jobs:
             brew trust --tap calvindotsg/tap
             VER=$(brew livecheck --cask --newer-only --json "calvindotsg/tap/$CASK" \
               | jq -r '.[0].version.latest // empty')
-            [ -z "$VER" ] && echo "Already up to date" && exit 0
+            if [ -z "$VER" ]; then
+              # `exit 0` ends the step, not the job. Signal the rest of the job
+              # instead, or the later steps run with an empty version and commit a
+              # checksum of a 404 body.
+              echo "Already up to date"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
+      # shell: bash turns on pipefail (Actions' default `run:` shell is `bash -e`
+      # with pipefail OFF), and -f makes curl fail on 4xx/5xx instead of piping an
+      # error page into shasum. The pattern check is the backstop.
       - name: Compute SHA256
         id: sha
+        if: steps.version.outputs.skip != 'true'
+        shell: bash
         env:
           VER: ${{ steps.version.outputs.version }}
         run: |
-          ARM_SHA=$(curl -sL "https://github.com/mltek/firefoo-releases/releases/download/v${VER}/Firefoo-${VER}-arm64.dmg" \
-            | shasum -a 256 | cut -d' ' -f1)
-          X64_SHA=$(curl -sL "https://github.com/mltek/firefoo-releases/releases/download/v${VER}/Firefoo-${VER}-x64.dmg" \
-            | shasum -a 256 | cut -d' ' -f1)
+          set -euo pipefail
+          base="https://github.com/mltek/firefoo-releases/releases/download/v${VER}"
+          ARM_SHA=$(curl -fsSL --retry 3 "${base}/Firefoo-${VER}-arm64.dmg" | shasum -a 256 | cut -d' ' -f1)
+          X64_SHA=$(curl -fsSL --retry 3 "${base}/Firefoo-${VER}-x64.dmg" | shasum -a 256 | cut -d' ' -f1)
+          for s in "$ARM_SHA" "$X64_SHA"; do
+            [[ "$s" =~ ^[0-9a-f]{64}$ ]] \
+              || { echo "::error::did not get a usable checksum for v${VER}"; exit 1; }
+          done
           echo "arm=$ARM_SHA" >> "$GITHUB_OUTPUT"
           echo "intel=$X64_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Update cask file
+        if: steps.version.outputs.skip != 'true'
+        shell: bash
         env:
           VER: ${{ steps.version.outputs.version }}
           ARM_SHA: ${{ steps.sha.outputs.arm }}
           X64_SHA: ${{ steps.sha.outputs.intel }}
         run: |
+          set -euo pipefail
           python3 << 'PYEOF'
-          import re, os
-          path = f"Casks/{os.environ['CASK']}.rb"
+          import os
+          import re
+
+          name = os.path.basename(os.environ["CASK"])
+          path = os.path.join("Casks", f"{name}.rb")
           ver, arm, x64 = os.environ["VER"], os.environ["ARM_SHA"], os.environ["X64_SHA"]
-          content = open(path).read()
-          content = re.sub(r'(  version )".*?"', rf'\1"{ver}"', content, count=1)
-          content = re.sub(r'(  sha256 arm:\s+)"[a-f0-9]+"', rf'\1"{arm}"', content, count=1)
-          content = re.sub(r'(         intel: )"[a-f0-9]+"', rf'\1"{x64}"', content, count=1)
-          open(path, "w").write(content)
+
+          with open(path) as f:
+              content = f.read()
+
+          # Callable replacements are inserted literally; an rf"..." template would
+          # have re interpret backslashes and \1-style references in the values.
+          def literal(value):
+              return lambda m: m.group(1) + '"' + value + '"'
+
+          content, n_ver = re.subn(r'(  version )".*?"', literal(ver), content, count=1)
+          content, n_arm = re.subn(r'(  sha256 arm:\s+)"[a-f0-9]+"', literal(arm), content, count=1)
+          content, n_x64 = re.subn(r'(         intel: )"[a-f0-9]+"', literal(x64), content, count=1)
+          if (n_ver, n_arm, n_x64) != (1, 1, 1):
+              print(f"::error::expected one version and two sha256 stanzas, rewrote {n_ver}/{n_arm}/{n_x64}")
+              raise SystemExit(1)
+
+          with open(path, "w") as f:
+              f.write(content)
           PYEOF
 
+      # `git diff --exit-code && echo ... && exit 0` is deliberate: under `bash -e`
+      # a failing command in an && list that is not the final command is exempt
+      # from errexit, so a dirty tree falls through to the commit below.
       - name: Commit and push
+        if: steps.version.outputs.skip != 'true'
+        shell: bash
         env:
           VER: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git diff --exit-code && echo "No changes" && exit 0
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "Casks/$CASK.rb"
           git commit -m "chore($CASK): bump to $VER"
-          git push
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" HEAD:main

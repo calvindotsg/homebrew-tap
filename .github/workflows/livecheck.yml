@@ -6,57 +6,192 @@ on:
 permissions:
   contents: write
   pull-requests: write
+
+# A manual dispatch near 07:00 UTC would otherwise race the cron onto the same
+# `bump-<name>-<version>` branch — the non-fast-forward failure CLAUDE.md
+# documents. Queue instead of cancelling: a half-finished bump leaves the tap
+# clone dirty.
+concurrency:
+  group: livecheck
+  cancel-in-progress: false
+
 jobs:
+  # Formulae with no Python resources. `brew bump-formula-pr` always calls
+  # `PyPI.update_python_resources!`, but with an explicit `--version` (which the
+  # action always passes in livecheck mode) that helper returns immediately
+  # unless the formula's stable `url` is a files.pythonhosted.org sdist
+  # (`ignore_non_pypi_packages: true` → early return in Library/Homebrew/utils/pypi.rb).
+  # opensrc downloads a GitHub release binary and cloudflare-cf an npm tarball,
+  # so neither ever reaches `pip`, and no upstream code executes in this job.
+  # pymarkdownlnt does, which is why it has its own job below.
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: Homebrew/actions/setup-homebrew@main
+      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
 
-      # Needed by pymarkdownlnt only. `brew bump-formula-pr` always calls
-      # `PyPI.update_python_resources!` to regenerate resource stanzas, and that shells out
-      # to `<python@3.13 keg>/bin/python -m pip install --dry-run`. `formula_opt_libexec`
-      # builds that path without checking the keg exists, and
-      # dawidd6/action-homebrew-bump-formula never passes `--install-dependencies` — so on a
-      # bare ubuntu runner the pip call fails and bump-formula-pr odies with "Unable to
-      # determine dependencies ... update the resources manually". The action rescues
-      # per-formula but re-raises at the end, taking the whole job red.
-      #
-      # The other two formulae here have no Python resources, which is why this was not
-      # needed before. Keep in step with `depends_on "python@3.x"` in
-      # Formula/pymarkdownlnt.rb.
-      - name: Install python@3.13 for Python resource regeneration
-        run: brew install python@3.13
-
-      - uses: dawidd6/action-homebrew-bump-formula@v5
+      - uses: dawidd6/action-homebrew-bump-formula@3428a0601bba3173ec0bdcc945be23fa27aa4c31 # v5
         with:
           token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
           no_fork: true
           formula: |
             calvindotsg/tap/opensrc
             calvindotsg/tap/cloudflare-cf
-            calvindotsg/tap/pymarkdownlnt
           livecheck: true
 
+  # pymarkdownlnt is sourced from a PyPI sdist, so `brew bump-formula-pr` calls
+  # `PyPI.update_python_resources!` → `pip install --dry-run`, which builds each
+  # candidate sdist and therefore executes its PEP 517 backend — arbitrary code
+  # from around a dozen upstream projects, none of them ours. `Utils.popen_read`
+  # only *adds* to the environment, so anything this job holds is inherited by
+  # that subprocess.
+  #
+  # The bump is therefore split in two: everything that runs upstream code runs
+  # with no secret in scope and a zero-permission job token (see `permissions: {}`
+  # below — without it setup-homebrew hands that code a writable token), and the
+  # PAT appears only in the final step, which does nothing but push an
+  # already-written commit and open a PR.
+  #
+  # Notes on the invocation, all verified against Homebrew HEAD:
+  #   * `--write-only` alone writes the file but takes no git action; `--commit`
+  #     is required for it to produce a commit
+  #     (`return if args.write_only? && !args.commit?` in dev-cmd/bump-formula-pr.rb).
+  #   * with `--commit`, Homebrew::Bump.create_pr skips its own `git checkout -b`
+  #     and returns before pushing, so the commit lands on the tap clone's
+  #     current branch and this workflow owns naming and pushing it.
+  #   * `bump-formula-pr` raises UsageError without `--version`, hence the
+  #     separate livecheck step.
+  #   * python@3.13 must be installed or the resource regeneration shells out to
+  #     a keg path that does not exist. Keep in step with `depends_on "python@3.x"`
+  #     in Formula/pymarkdownlnt.rb.
+  bump-python:
+    runs-on: ubuntu-latest
+    # Drops the job's ambient GITHUB_TOKEN to no permissions. This is load-bearing,
+    # not tidiness: Homebrew/actions/setup-homebrew defaults `brew-gh-api-token` to
+    # `${{ github.token }}` and its main.sh writes `HOMEBREW_GITHUB_API_TOKEN=<that>`
+    # into $GITHUB_ENV for the whole job — and `HOMEBREW_*` is exactly what survives
+    # brew's `env -i` re-exec into the pip subprocess, while `GITHUB_*` does not. So
+    # without this the workflow-level `contents: write` would be readable by every
+    # upstream sdist build backend, which is the thing this job exists to prevent.
+    # Everything here authenticates with the PAT instead, so no scopes are needed.
+    permissions: {}
+    env:
+      FORMULA: pymarkdownlnt
+    steps:
+      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
+
+      - name: Prepare Homebrew
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew developer on
+          brew tap calvindotsg/tap
+          # Homebrew 6.0+ refuses to load an untrusted non-official tap for bare
+          # tokens and bulk commands (the latter skip silently). Idempotent.
+          brew trust --tap calvindotsg/tap
+          brew install python@3.13
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check for a newer release
+        id: lc
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(brew livecheck --formula --quiet --newer-only --json \
+                      "calvindotsg/tap/${FORMULA}" | jq -r '.[0].version.latest // empty')
+          if [ -z "$version" ]; then
+            echo "${FORMULA}: already current"
+          else
+            echo "${FORMULA}: newer release ${version}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Write and commit the bump
+        # This is the step that runs upstream code. No secret is in scope, and the
+        # job's ambient token has no permissions (see `permissions: {}` above), so a
+        # hostile build backend has nothing to read. Residual, and the reason the
+        # follow-up is to split this across jobs: a later step in this same job does
+        # hold the PAT, and a backend that can write $HOME or the tap clone could
+        # still influence it. Fully isolating that needs a separate job with a fresh
+        # checkout.
+        if: steps.lc.outputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ steps.lc.outputs.version }}
+        run: |
+          set -euo pipefail
+          brew bump-formula-pr --write-only --commit --no-browse \
+            --version="$VERSION" "calvindotsg/tap/${FORMULA}"
+
+      - name: Push the commit and open the PR
+        # The credential appears only now, after every upstream sdist build has
+        # finished. This step runs no third-party code.
+        if: steps.lc.outputs.version != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+          VERSION: ${{ steps.lc.outputs.version }}
+        run: |
+          set -euo pipefail
+          tap_dir=$(brew --repo calvindotsg/tap)
+          branch="bump-${FORMULA}-${VERSION}"
+
+          if git ls-remote --exit-code --heads \
+               "https://github.com/${GITHUB_REPOSITORY}" "$branch" >/dev/null 2>&1; then
+            # ::warning:: rather than a silent skip: a bump PR that never merges
+            # would otherwise make this job report green every day while nothing
+            # actually bumps. It does not change the exit status.
+            echo "::warning::${FORMULA}: branch $branch already exists upstream — an earlier bump PR is still open. Not re-pushing."
+            exit 0
+          fi
+
+          cd "$tap_dir"
+          # `--commit` skips Homebrew's own unshallow, and a shallow clone cannot
+          # push history the remote does not already have.
+          if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+            git fetch --unshallow origin
+          fi
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" \
+            "HEAD:refs/heads/${branch}"
+
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title "${FORMULA} ${VERSION}" \
+            --body "Automated bump to ${VERSION} by the livecheck cron. Resource stanzas regenerated by \`brew bump-formula-pr\`."
+
   # Casks need a separate job: dawidd6/action-homebrew-bump-formula is formula-only
-  # (no `cask:` input), so the job above can never bump a cask. Runs on macOS because
+  # (no `cask:` input), so the jobs above can never bump a cask. Runs on macOS because
   # Homebrew has no cask support on Linux at all — not a livecheck-strategy limitation.
   #
   # Only casks WITHOUT `auto_updates true` belong here. firefoo and littlebird self-update,
   # so Homebrew deliberately doesn't own their upgrades; tmog cannot, so it does.
   #
-  # `brew bump-cask-pr` opens `bump-<cask>-<version>` branches, which already satisfy
-  # automerge.yml's `startsWith(head_branch, 'bump-')` gate — no change needed there.
+  # `brew test-bot` has no cask module at all — its library holds only formulae*.rb and
+  # tap_syntax.rb — so a Casks/-only PR is style-checked and nothing more: no download, no
+  # checksum recomputation, no URL resolution. A human reviewer cannot close that gap
+  # either, because the diff is a version string plus a digest recomputed from the same
+  # vendor response that served the file. The digest attests that the bytes have not
+  # changed since Homebrew fetched them minutes earlier — not that they are the bytes the
+  # vendor meant to ship. The signing-identity check below is the part a redirected or
+  # tampered download cannot forge, so it runs before any PR is opened.
   bump-casks:
     runs-on: macos-latest
+    # Same reason as bump-python: setup-homebrew would otherwise leave the job's
+    # `contents: write` token in HOMEBREW_GITHUB_API_TOKEN for every later step,
+    # including the one that mounts vendor-controlled media. The steps that need a
+    # credential name the PAT explicitly.
+    permissions: {}
     steps:
-      - uses: Homebrew/actions/setup-homebrew@main
-      - name: Bump outdated casks
+      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
+
+      - name: Write and commit outdated cask bumps
+        id: bump
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
           HOMEBREW_NO_INSTALL_FROM_API: 1
         run: |
           set -euo pipefail
+          brew developer on
           brew tap calvindotsg/tap
           # Homebrew 6.0+ requires non-official taps to be trusted before it will LOAD their
           # formulae/casks, and `brew tap` does NOT confer trust — only `brew trust` does
@@ -65,10 +200,13 @@ jobs:
           # consent. This line is belt-and-braces: it keeps the job working if a future edit
           # uses a bare token or a bulk command, both of which DO enforce trust (bulk ones fail
           # silently — "Skipping calvindotsg/tap because it is not trusted" — which would leave
-          # casks quietly un-bumped). The `bump` job above already does this via
-          # dawidd6/action-homebrew-bump-formula ("==> Trusting calvindotsg/tap tap...").
-          # Idempotent: prints "Already trusted tap" and exits 0.
+          # casks quietly un-bumped). Idempotent: prints "Already trusted tap" and exits 0.
           brew trust --tap calvindotsg/tap
+
+          tap_dir=$(brew --repo calvindotsg/tap)
+          base=$(git -C "$tap_dir" rev-parse HEAD)
+          : > "${RUNNER_TEMP}/bumped.tsv"
+
           for cask in tmog; do
             latest=$(brew livecheck --cask --newer-only --json "calvindotsg/tap/${cask}" \
                        | jq -r '.[0].version.latest // empty')
@@ -77,6 +215,132 @@ jobs:
               continue
             fi
             echo "${cask}: bumping to ${latest}"
-            brew bump-cask-pr --no-fork --no-browse --version "${latest}" \
-              "calvindotsg/tap/${cask}"
+            # Reset first so each cask's branch carries exactly one commit on top of
+            # main, even when several casks bump in the same run.
+            git -C "$tap_dir" reset --hard "$base"
+            # --write-only --commit writes and commits but opens nothing: the PR
+            # waits until the artifact check below has passed.
+            brew bump-cask-pr --write-only --commit --no-browse \
+              --version "${latest}" "calvindotsg/tap/${cask}"
+            sha=$(git -C "$tap_dir" rev-parse HEAD)
+            printf '%s\t%s\t%s\n' "${cask}" "${latest}" "${sha}" >> "${RUNNER_TEMP}/bumped.tsv"
           done
+
+          if [ -s "${RUNNER_TEMP}/bumped.tsv" ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify the signing identity of each bumped artifact
+        # No secret in scope, and the job token has no permissions: this step
+        # downloads and mounts vendor-controlled media. A cask whose Developer ID
+        # changed must never reach a PR.
+        if: steps.bump.outputs.any == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tap_dir=$(brew --repo calvindotsg/tap)
+
+          # Pinned Apple Developer ID Team Identifier per cask. A cask with no entry
+          # here fails closed, so adding a cask to the loop above without pinning its
+          # signing identity cannot silently skip verification.
+          expected_team_for() {
+            case "$1" in
+              tmog) echo "25BPDA4NQ3" ;;  # Developer ID Application: David Plummer
+              *)    echo "" ;;
+            esac
+          }
+
+          # Read on fd 3 so brew/codesign/hdiutil cannot swallow the remaining lines.
+          while IFS=$'\t' read -r cask version sha <&3; do
+            expected=$(expected_team_for "$cask")
+            if [ -z "$expected" ]; then
+              echo "::error::${cask}: no pinned Team ID; refusing to bump unverified."
+              exit 1
+            fi
+
+            # The bump loop resets the tap clone before each cask, so after it the
+            # working tree holds only the last one. `brew fetch` and `brew info`
+            # resolve a tap-qualified cask off disk, so check out this cask's own
+            # commit first or every cask but the last is verified against its
+            # pre-bump artifact.
+            git -C "$tap_dir" reset --hard "$sha"
+
+            brew fetch --cask --force "calvindotsg/tap/${cask}"
+            dmg=$(brew --cache --cask "calvindotsg/tap/${cask}")
+            mnt="${RUNNER_TEMP}/mnt-${cask}"
+            mkdir -p "$mnt"
+            hdiutil attach -nobrowse -quiet -readonly -mountpoint "$mnt" "$dmg"
+
+            # Verify the bundle the cask actually installs, named by its own `app`
+            # stanza — not whichever .app the image happens to list first. Signing is
+            # a property of the bundle, not of its path, so a renamed copy of the
+            # vendor's genuine app passes every check below while `app` installs a
+            # different one; picking by find order would verify the decoy.
+            app_rel=$(brew info --json=v2 --cask "calvindotsg/tap/${cask}" \
+                        | jq -r '[.casks[0].artifacts[] | .app[]? | select(type == "string")][0] // empty')
+            if [ -z "$app_rel" ]; then
+              hdiutil detach -quiet "$mnt" || true
+              echo "::error::${cask}: cask declares no app stanza; cannot verify."
+              exit 1
+            fi
+            app="${mnt}/${app_rel}"
+            if [ ! -d "$app" ]; then
+              hdiutil detach -quiet "$mnt" || true
+              echo "::error::${cask}: image does not contain '${app_rel}', which is what the cask installs."
+              exit 1
+            fi
+
+            team=""
+            ok=1
+            codesign --verify --strict --deep "$app" || ok=0
+            spctl -a -t open --context context:primary-signature "$app" || ok=0
+            # `|| true` so an unsigned bundle reaches the explicit comparison below
+            # rather than aborting the step with no explanation.
+            team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p' || true)
+            hdiutil detach -quiet "$mnt" || true
+
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::${cask} ${version}: code signature or notarization check failed."
+              exit 1
+            fi
+            if [ "$team" != "$expected" ]; then
+              echo "::error::${cask} ${version}: signing Team ID is '${team}', expected '${expected}'."
+              exit 1
+            fi
+            echo "${cask} ${version}: signed by ${team} and notarized."
+          done 3< "${RUNNER_TEMP}/bumped.tsv"
+
+      - name: Push the commits and open the PRs
+        if: steps.bump.outputs.any == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+        run: |
+          set -euo pipefail
+          tap_dir=$(brew --repo calvindotsg/tap)
+          cd "$tap_dir"
+          if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
+            git fetch --unshallow origin
+          fi
+
+          # Read on fd 3 so git/gh cannot swallow the remaining lines.
+          while IFS=$'\t' read -r cask version sha <&3; do
+            # Cask versions can carry characters that are not valid in a ref name
+            # (tmog's is "<version>,<build>"), so normalise before using one.
+            safe=$(printf '%s' "$version" | tr -c 'A-Za-z0-9._-' '-')
+            branch="bump-${cask}-${safe}"
+            if git ls-remote --exit-code --heads \
+                 "https://github.com/${GITHUB_REPOSITORY}" "$branch" >/dev/null 2>&1; then
+              # ::warning:: so a stuck cask bump PR is visible rather than making
+              # this job look healthy forever. Does not change the exit status.
+              echo "::warning::${cask}: branch $branch already exists upstream — an earlier bump PR is still open. Not re-pushing."
+              continue
+            fi
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" \
+              "${sha}:refs/heads/${branch}"
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+              --title "${cask} ${version}" \
+              --body "Automated cask bump by the livecheck cron. Artifact code signature, notarization and pinned Developer ID Team Identifier were verified before this PR was opened."
+          done 3< "${RUNNER_TEMP}/bumped.tsv"
