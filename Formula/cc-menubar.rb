@@ -9,10 +9,20 @@ class CcMenubar < Formula
 
   # Upstream repository archived 2026-08-16. Deprecating rather than deleting keeps
   # `brew upgrade` warning instead of failing for anyone who already installed it.
-  # With no explicit `disable!` date Homebrew disables this automatically one year
-  # after the deprecation date (2027-08-16); removal from the tap follows that.
   # The tool remains available from PyPI (`uv tool install cc-menubar`).
+  #
+  # The `disable!` date is explicit on purpose. Nothing in `brew` promotes a
+  # deprecation to a disable on its own — the one-year rule is homebrew-core
+  # maintainer policy, not code, and `DeprecateDisable::REMOVE_DISABLED_TIME_WINDOW`
+  # governs *removing already-disabled* formulae. In a third-party tap a deprecated
+  # formula stays deprecated forever unless someone writes the date down, so an
+  # earlier comment here claiming it happened automatically was wrong.
+  #
+  # Harmless until it fires: `formula.rb:5171` returns early while the date is in
+  # the future and a deprecation is present, so the reason and `@deprecated = true`
+  # above are preserved and only `brew info`'s disable date changes.
   deprecate! date: "2026-08-16", because: :repo_archived
+  disable! date: "2027-08-16", because: :repo_archived
 
   depends_on macos: :sonoma
   depends_on "python@3.13"
