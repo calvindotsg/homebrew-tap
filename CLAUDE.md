@@ -8,7 +8,9 @@ Casks/                          Homebrew cask definitions (.rb)
 .github/workflows/
   update-formula.yml            Automated formula update (dispatch + manual)
   update-cask.yml               Manual cask update (dispatch; firefoo-only, see below)
-  livecheck.yml                 Daily cron: `bump` (formulae) + `bump-casks` (non-auto-updating casks)
+  livecheck.yml                 Daily cron: `bump` (non-Python formulae) + `bump-python`
+                                (pymarkdownlnt) + `bump-casks` (non-auto-updating casks)
+.github/dependabot.yml          Weekly refresh of the workflows' action SHA pins
 ```
 
 Tap name `calvindotsg/tap` maps to this repo via Homebrew's `homebrew-` prefix convention.
@@ -33,7 +35,7 @@ Automated via `update-formula.yml`. Triggered automatically by source repos on r
 
 ### Third-Party Formulas
 
-For formulas wrapping packages Calvin doesn't control (e.g., `opensrc`), the `repository_dispatch` auto-bump flow is unavailable — there's no upstream release workflow to dispatch from. Instead, bumps flow through a tap-scoped **livecheck cron** defined in `.github/workflows/livecheck.yml` (daily 07:00 UTC) using [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula). Adding a new third-party formula = append its name to the `formula:` list in that workflow.
+For formulas wrapping packages Calvin doesn't control (e.g., `opensrc`), the `repository_dispatch` auto-bump flow is unavailable — there's no upstream release workflow to dispatch from. Instead, bumps flow through a tap-scoped **livecheck cron** defined in `.github/workflows/livecheck.yml` (daily 07:00 UTC) using [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula). Adding a new third-party formula = append its name to the `formula:` list in that workflow's `bump` job — unless it is a Python formula sourced from a PyPI sdist, which belongs in the separate `bump-python` job (one formula per job; see that job's comments).
 
 The scope is deliberately limited to third-party formulas by an explicit list — Calvin-owned formulas route through `repository_dispatch` from their source repos, and including them here would race against those pushes.
 
@@ -52,7 +54,11 @@ See `## Reusable Patterns` (added in the docs-reusable-patterns PR) for the "sch
 
 `.github/workflows/tests.yml` runs `brew test-bot` on every PR (and pushes to `main`): `--only-tap-syntax` audits/styles the whole tap, `--only-formulae` builds and tests the formulae *changed* in the PR. Matrix is ubuntu (Linux-compatible CLIs) + macOS (the `:macos`-gated formulae). It only builds changed formulae, so cost scales with the diff.
 
-`.github/workflows/automerge.yml` squash-merges and **deletes the branch** of any same-repo `bump-*` PR once test-bot passes. Branch deletion is the actual fix for the recurring livecheck failures: `brew bump-formula-pr` reuses `bump-<formula>-<version>` branch names, so an unmerged PR's stale branch made every later run fail to push (non-fast-forward) and crash on the action's `odie` bug. With auto-merge draining the queue, the branch never lingers. Fork PRs are skipped (`isCrossRepository` guard) so a fork can't auto-merge itself.
+The same workflow carries an `arch-consistency` job. `brew bump-formula-pr` rewrites only a formula's top-level stable `url`/`sha256`, so an arch override nested in `on_intel`/`on_arm` never moves with the automated bump — and test-bot builds for the runner's own architecture only, so nothing else notices. The job fails the PR when one formula references more than one upstream release tag; `Formula/opensrc.rb` is the only formula in the tap with an arch override, so it is the one this guards.
+
+`.github/workflows/automerge.yml` squash-merges and **deletes the branch** of any same-repo `bump-*` PR once test-bot passes. Branch deletion is the actual fix for the recurring livecheck failures: `brew bump-formula-pr` reuses `bump-<formula>-<version>` branch names, so an unmerged PR's stale branch made every later run fail to push (non-fast-forward) and crash on the action's `odie` bug. With auto-merge draining the queue, the branch never lingers.
+
+It resolves the PR from `workflow_run.head_sha` (matched against `headRefOid`) and merges with `--match-head-commit`, after checking `head_repository.full_name == github.repository`. The `startsWith(head_branch, 'bump-')` condition is only a cheap pre-filter — branch names are attacker-suppliable and `gh pr list --head` matches by name across repositories, so nothing is authorized on one. `isCrossRepository` stays as a second, independent check.
 
 ## Adding a Cask
 
@@ -77,11 +83,11 @@ Note: `update-cask.yml`'s SHA step hardcodes Firefoo's download-URL pattern, so 
 
 ### Cask auto-bump (`bump-casks` job)
 
-Casks cannot ride the `bump` job: [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula) is **formula-only** — it has no `cask:` input. So `livecheck.yml` carries a second job, `bump-casks`, running `brew livecheck --cask --newer-only --json` into `brew bump-cask-pr`.
+Casks cannot ride the `bump` job: [`dawidd6/action-homebrew-bump-formula@v5`](https://github.com/dawidd6/action-homebrew-bump-formula) is **formula-only** — it has no `cask:` input. So `livecheck.yml` carries a separate job, `bump-casks`, running `brew livecheck --cask --newer-only --json` into `brew bump-cask-pr --write-only --commit`, verifying the downloaded artifact, and only then pushing the branch and opening the PR.
 
 - **Runs on `macos-latest`** because Homebrew has no cask support on Linux at all. Public repo, so the runner minutes are free.
-- **Only casks without `auto_updates true`** belong in its `for cask in …` list. `firefoo` and `littlebird` self-update, so Homebrew deliberately does not own their upgrades; `tmog` cannot self-update, so it does. Adding a new non-auto-updating cask = append its token to that list.
-- `brew bump-cask-pr` opens `bump-<cask>-<version>` branches, which already satisfy `automerge.yml`'s `startsWith(head_branch, 'bump-')` gate — **no change to `automerge.yml` is needed**.
+- **Only casks without `auto_updates true`** belong in its `for cask in …` list. `firefoo` and `littlebird` self-update, so Homebrew deliberately does not own their upgrades; `tmog` cannot self-update, so it does. Adding a new non-auto-updating cask = append its token to that list **and** add its Developer ID Team Identifier to `expected_team_for` in the verification step (`codesign -dv <app> 2>&1 | sed -n 's/^TeamIdentifier=//p'` to read it). A cask with no pinned Team ID fails the job rather than bumping unverified.
+- The job pushes `bump-<cask>-<version>` branches itself (`--write-only --commit` writes and commits but opens nothing), normalising characters that are not valid in a ref — `tmog`'s `version,build` composite among them. The `bump-` prefix keeps them inside `automerge.yml`'s pre-filter.
 - When a cask is already current, `--newer-only` returns `[]`, `jq` yields empty, and the loop logs "already current" and exits 0.
 
 ## Service Formulas
@@ -101,7 +107,7 @@ Templates in this tap worth copying/adapting into other Homebrew taps or formula
 - **Service formula (launchd via `service do`)** — see `Formula/mac-upkeep.rb`. Cron DSL accepts only single ints per field (see Non-Obvious Constraints below).
 - **Auto-bump via source-repo dispatch** — see `.github/workflows/update-formula.yml` + source-repo `bump-tap` job pattern (`calvindotsg/mac-upkeep/.github/workflows/release.yml`). For Calvin-owned formulas.
 - **Scheduled livecheck cron (third-party)** — see `.github/workflows/livecheck.yml`. `dawidd6/action-homebrew-bump-formula@v5` with `livecheck: true`. Daily 07:00 UTC. For formulas whose source repos Calvin doesn't control.
-- **Explicit third-party `formula:` list in livecheck** — scope the cron to non-Calvin-owned formulas by enumerating them (currently `opensrc`, `cloudflare-cf`, `pymarkdownlnt`). Avoids races with the `repository_dispatch` path used by Calvin-owned formulas.
+- **Explicit third-party `formula:` list in livecheck** — scope the cron to non-Calvin-owned formulas by enumerating them (currently `opensrc` and `cloudflare-cf` in the `bump` job; `pymarkdownlnt` has its own `bump-python` job). Avoids races with the `repository_dispatch` path used by Calvin-owned formulas.
 - **`brew test-bot` PR CI** — see `.github/workflows/tests.yml`. Canonical `tap-new` template (ubuntu + macOS matrix); builds only changed formulae. Gates the auto-merge below.
 - **Auto-merge `bump-*` PRs with branch deletion** — see `.github/workflows/automerge.yml`. `workflow_run`-gated on test-bot success; squash + `--delete-branch`. Stops the stale-branch non-fast-forward failures that pile up when livecheck bump PRs go unmerged.
 
@@ -118,7 +124,7 @@ Templates in this tap worth copying/adapting into other Homebrew taps or formula
 - `sha256` is required for stable releases.
 - Cron in service DSL only supports single integer values per field.
 - Python formulas must use `Language::Python::Virtualenv` with explicit resource stanzas.
-- **A Python formula in the livecheck cron needs its python keg installed in CI.** `brew bump-formula-pr` unconditionally calls `PyPI.update_python_resources!`, which shells out to `<python@3.x keg>/bin/python -m pip install --dry-run` to re-resolve resources. `formula_opt_libexec` constructs that path with no installed-check, and `dawidd6/action-homebrew-bump-formula` never passes `--install-dependencies`, so on a bare `ubuntu-latest` runner the call fails and the job goes red. `.github/workflows/livecheck.yml` therefore runs `brew install python@3.13` before the action. Keep that version in step with `depends_on "python@3.x"` in the formula.
+- **A Python formula in the livecheck cron needs its python keg installed in CI.** `brew bump-formula-pr` unconditionally calls `PyPI.update_python_resources!`, which shells out to `<python@3.x keg>/bin/python -m pip install --dry-run` to re-resolve resources. `formula_opt_libexec` constructs that path with no installed-check, and `dawidd6/action-homebrew-bump-formula` never passes `--install-dependencies`, so on a bare `ubuntu-latest` runner the call fails and the job goes red. The `bump-python` job in `.github/workflows/livecheck.yml` therefore runs `brew install python@3.13` before `brew bump-formula-pr`. Keep that version in step with `depends_on "python@3.x"` in the formula.
 - **Source a third-party Python formula from the PyPI sdist, not the GitHub tag.** `bump-formula-pr` passes `ignore_non_pypi_packages: true`, and `valid_pypi_package?` requires the main `url` to start with `https://files.pythonhosted.org/packages/`. With a GitHub tarball URL the cron bumps `url`/`sha256` and **silently skips every resource stanza** — automerge then lands a version bump whose dependencies are frozen at the old versions. A pythonhosted URL also auto-matches the `Pypi` livecheck strategy, so no `livecheck do` block is needed.
 - `poet -r <package>` calls PyPI API for the main package. If not on PyPI, the workflow falls back to updating only URL/sha256 (resource blocks unchanged). Warning logged via `::warning::`.
 - **`repository_dispatch` provides read-only GITHUB_TOKEN** — the workflow must declare `permissions: contents: write` to push. Without this, `git push` fails with "Permission denied to github-actions[bot]."
