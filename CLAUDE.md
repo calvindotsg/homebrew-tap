@@ -15,9 +15,13 @@ Casks/                          Homebrew cask definitions (.rb)
 ```
 
 **Every write to `main` goes through a pull request.** No workflow pushes to `main`
-any more, and no job holds a writable ambient token — `permissions: {}` everywhere,
-with the tap PAT named explicitly by the few steps that publish. Bot lanes land via
-`automerge.yml` once `brew test-bot` passes.
+any more, and **all seven jobs across the three credential-bearing workflows**
+(`livecheck.yml`, `livecheck-casks.yml`, `update-formula.yml`, `update-cask.yml`)
+declare `permissions: {}`, with the tap PAT named explicitly by the few steps that
+publish. The two exceptions are deliberate and are not credential-bearing:
+`automerge.yml` needs `contents`/`pull-requests: write` to merge, and `tests.yml`
+runs at `contents: read`. Bot lanes land via `automerge.yml` once `brew test-bot`
+passes.
 
 Tap name `calvindotsg/tap` maps to this repo via Homebrew's `homebrew-` prefix convention.
 
