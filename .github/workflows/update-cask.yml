@@ -13,8 +13,10 @@ on:
         description: "Version (e.g., 1.5.12) — leave empty to auto-detect via livecheck"
         required: false
 
-permissions:
-  contents: write
+# Nothing here uses the ambient GITHUB_TOKEN; the push and the PR are made with
+# the tap PAT. Set per job as well, since `permissions:` governs `github.token`
+# and some Homebrew actions copy it into the job environment.
+permissions: {}
 
 concurrency:
   group: cask-update
@@ -23,6 +25,7 @@ concurrency:
 jobs:
   update:
     runs-on: macos-latest
+    permissions: {}
     env:
       CASK: ${{ inputs.cask }}
     steps:
@@ -140,20 +143,42 @@ jobs:
               f.write(content)
           PYEOF
 
-      # `git diff --exit-code && echo ... && exit 0` is deliberate: under `bash -e`
-      # a failing command in an && list that is not the final command is exempt
-      # from errexit, so a dirty tree falls through to the commit below.
-      - name: Commit and push
+      - name: Open the bump PR
         if: steps.version.outputs.skip != 'true'
         shell: bash
         env:
           VER: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
         run: |
-          git diff --exit-code && echo "No changes" && exit 0
           set -euo pipefail
+          if git diff --quiet -- "Casks/$CASK.rb"; then
+            echo "No changes to Casks/$CASK.rb; nothing to open."
+            exit 0
+          fi
+
+          # `bump-` prefix so automerge.yml's pre-filter sees it; authorization
+          # there is on the tested commit, not on this name.
+          safe=$(printf '%s' "$VER" | tr -c 'A-Za-z0-9._-' '-')
+          branch="bump-${CASK}-${safe}"
+
+          if git ls-remote --exit-code --heads \
+               "https://github.com/${GITHUB_REPOSITORY}" "$branch" >/dev/null 2>&1; then
+            echo "::warning::${CASK}: branch $branch already exists upstream — an earlier bump PR is still open. Not re-pushing."
+            exit 0
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
           git add "Casks/$CASK.rb"
           git commit -m "chore($CASK): bump to $VER"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" HEAD:main
+
+          # PAT rather than github.token on purpose: a PR opened by github.token
+          # does not trigger workflows, so brew test-bot would never run and
+          # auto-merge would never fire.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" \
+            "HEAD:refs/heads/${branch}"
+
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title "$CASK $VER" \
+            --body "Manual cask bump to \`$VER\` via workflow_dispatch. Architecture checksums recomputed from the published assets."
