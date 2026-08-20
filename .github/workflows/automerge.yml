@@ -6,6 +6,14 @@ name: auto-merge bump PRs
 # name, so a stale branch left by an unmerged PR makes every subsequent livecheck
 # run fail to push (and crash the action). Clearing it on merge keeps the queue
 # self-draining.
+#
+# Authorization is keyed on the COMMIT that test-bot actually tested
+# (`workflow_run.head_sha`), never on the branch name. `head_branch` is
+# attacker-suppliable — anyone can open a fork PR from a branch called
+# `bump-anything` — and `gh pr list --head` matches by branch name across
+# repositories, so a name-keyed lookup can resolve to a different pull request
+# than the one whose tests passed. `--match-head-commit` makes GitHub reject the
+# merge server-side if the head moved between the green run and this job.
 on:
   workflow_run:
     workflows: ["brew test-bot"]
@@ -19,31 +27,43 @@ permissions:
 jobs:
   automerge:
     runs-on: ubuntu-latest
-    # Only same-repo bump branches whose test-bot run went green. Cross-repo
-    # (fork) PRs are skipped so a fork can't get itself auto-merged by naming
-    # its branch `bump-*`.
+    # Cheap pre-filter only. The real authorization checks live in the step
+    # below, which works from head_sha and head_repository rather than a name.
     if: >
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
       startsWith(github.event.workflow_run.head_branch, 'bump-')
     steps:
       - name: Merge the bump PR
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
-          info=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$HEAD_BRANCH" \
-                   --state open --json number,isCrossRepository \
-                   --jq '.[0] | "\(.number) \(.isCrossRepository)"')
-          pr=${info%% *}
-          cross=${info##* }
+          set -euo pipefail
+
+          # 1. The green run must have originated in this repository. A fork's
+          #    run can never authorize a merge here, whatever it named its branch.
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "Run came from ${HEAD_REPO:-<unknown>}, not $GITHUB_REPOSITORY; skipping."
+            exit 0
+          fi
+
+          # 2. Resolve the PR by the exact commit that was tested. isCrossRepository
+          #    stays as a second, independent check on the PR object itself.
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+                 --json number,headRefOid,isCrossRepository \
+                 --jq "[.[] | select(.headRefOid == \"$HEAD_SHA\" and .isCrossRepository == false)][0].number")
           if [ -z "$pr" ] || [ "$pr" = "null" ]; then
-            echo "No open PR for $HEAD_BRANCH; nothing to merge."
+            echo "No open same-repo PR whose head is $HEAD_SHA; nothing to merge."
             exit 0
           fi
-          if [ "$cross" != "false" ]; then
-            echo "PR #$pr is from a fork; skipping auto-merge."
-            exit 0
-          fi
-          echo "Auto-merging PR #$pr ($HEAD_BRANCH)"
-          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash --delete-branch
+
+          # 3. Merge only if the head is still that commit. If someone pushed to the
+          #    branch after test-bot went green, GitHub rejects this and the job fails
+          #    loudly rather than merging an untested commit.
+          echo "Auto-merging PR #$pr ($HEAD_BRANCH @ $HEAD_SHA)"
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
+            --match-head-commit "$HEAD_SHA"
