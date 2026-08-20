@@ -3,9 +3,11 @@ on:
   schedule:
     - cron: "0 7 * * *"
   workflow_dispatch:
-permissions:
-  contents: write
-  pull-requests: write
+# Every write here is made with the tap PAT, so the ambient GITHUB_TOKEN needs no
+# scopes at all. This must ALSO be repeated per job: setup-homebrew copies
+# `github.token` into HOMEBREW_GITHUB_API_TOKEN for the whole job, and `HOMEBREW_*`
+# is what survives brew's `env -i` re-exec into subprocesses.
+permissions: {}
 
 # A manual dispatch near 07:00 UTC would otherwise race the cron onto the same
 # `bump-<name>-<version>` branch — the non-fast-forward failure CLAUDE.md
@@ -26,6 +28,11 @@ jobs:
   # pymarkdownlnt does, which is why it has its own job below.
   bump:
     runs-on: ubuntu-latest
+    # No upstream code runs here today — but that is a property of these two
+    # formulae's URLs, not of the job. Add a PyPI-sourced formula to the list
+    # below and `pip` would start running with whatever this job holds, so keep
+    # the token powerless regardless. The action authenticates with the PAT.
+    permissions: {}
     steps:
       - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
 
@@ -45,19 +52,25 @@ jobs:
   # only *adds* to the environment, so anything this job holds is inherited by
   # that subprocess.
   #
-  # The bump is therefore split in two: everything that runs upstream code runs
-  # with no secret in scope and a zero-permission job token (see `permissions: {}`
-  # below — without it setup-homebrew hands that code a writable token), and the
-  # PAT appears only in the final step, which does nothing but push an
-  # already-written commit and open a PR.
+  # The bump is therefore split across two JOBS, not two steps. A step boundary
+  # is not a credential boundary — steps share a runner, a $HOME and a git config,
+  # so a hostile build backend could wait and influence a later step that holds the
+  # PAT. Separate jobs get separate machines, and the only thing that crosses is
+  # one file.
+  #
+  # `permissions: {}` on both is load-bearing rather than tidiness:
+  # Homebrew/actions/setup-homebrew defaults `brew-gh-api-token` to
+  # `${{ github.token }}` and its main.sh writes `HOMEBREW_GITHUB_API_TOKEN=<that>`
+  # into $GITHUB_ENV for the whole job — and `HOMEBREW_*` is exactly what survives
+  # brew's `env -i` re-exec into the pip subprocess, while `GITHUB_*` does not.
+  # Confirmed in a live run: this job is granted `Metadata: read` and nothing else.
   #
   # Notes on the invocation, all verified against Homebrew HEAD:
-  #   * `--write-only` alone writes the file but takes no git action; `--commit`
-  #     is required for it to produce a commit
+  #   * `--write-only` writes the file and takes no git action at all
   #     (`return if args.write_only? && !args.commit?` in dev-cmd/bump-formula-pr.rb).
-  #   * with `--commit`, Homebrew::Bump.create_pr skips its own `git checkout -b`
-  #     and returns before pushing, so the commit lands on the tap clone's
-  #     current branch and this workflow owns naming and pushing it.
+  #     That is now exactly what is wanted — the commit is made in the other job —
+  #     so `--commit` is deliberately NOT passed, which also removes the
+  #     shallow-clone handling the commit path needed.
   #   * `bump-formula-pr` raises UsageError without `--version`, hence the
   #     separate livecheck step.
   #   * python@3.13 must be installed or the resource regeneration shells out to
@@ -65,15 +78,9 @@ jobs:
   #     in Formula/pymarkdownlnt.rb.
   bump-python:
     runs-on: ubuntu-latest
-    # Drops the job's ambient GITHUB_TOKEN to no permissions. This is load-bearing,
-    # not tidiness: Homebrew/actions/setup-homebrew defaults `brew-gh-api-token` to
-    # `${{ github.token }}` and its main.sh writes `HOMEBREW_GITHUB_API_TOKEN=<that>`
-    # into $GITHUB_ENV for the whole job — and `HOMEBREW_*` is exactly what survives
-    # brew's `env -i` re-exec into the pip subprocess, while `GITHUB_*` does not. So
-    # without this the workflow-level `contents: write` would be readable by every
-    # upstream sdist build backend, which is the thing this job exists to prevent.
-    # Everything here authenticates with the PAT instead, so no scopes are needed.
     permissions: {}
+    outputs:
+      version: ${{ steps.lc.outputs.version }}
     env:
       FORMULA: pymarkdownlnt
     steps:
@@ -106,36 +113,80 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Write and commit the bump
-        # This is the step that runs upstream code. No secret is in scope, and the
-        # job's ambient token has no permissions (see `permissions: {}` above), so a
-        # hostile build backend has nothing to read. Residual, and the reason the
-        # follow-up is to split this across jobs: a later step in this same job does
-        # hold the PAT, and a backend that can write $HOME or the tap clone could
-        # still influence it. Fully isolating that needs a separate job with a fresh
-        # checkout.
+      - name: Rewrite the formula
+        # The step that runs upstream code. Nothing in this job can reach a
+        # credential, and nothing it leaves behind outlives the job except the
+        # single file staged below.
         if: steps.lc.outputs.version != ''
         shell: bash
         env:
           VERSION: ${{ steps.lc.outputs.version }}
         run: |
           set -euo pipefail
-          brew bump-formula-pr --write-only --commit --no-browse \
+          brew bump-formula-pr --write-only --no-browse \
             --version="$VERSION" "calvindotsg/tap/${FORMULA}"
 
-      - name: Push the commit and open the PR
-        # The credential appears only now, after every upstream sdist build has
-        # finished. This step runs no third-party code.
+      # Hand off exactly one file, under a fixed name. The publishing job decides
+      # where it goes, so nothing produced here can choose its own destination.
+      - name: Stage the rewritten formula
         if: steps.lc.outputs.version != ''
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
-          VERSION: ${{ steps.lc.outputs.version }}
         run: |
           set -euo pipefail
           tap_dir=$(brew --repo calvindotsg/tap)
-          branch="bump-${FORMULA}-${VERSION}"
+          mkdir -p /tmp/out
+          cp "${tap_dir}/Formula/${FORMULA}.rb" /tmp/out/formula.rb
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.lc.outputs.version != ''
+        with:
+          name: rewritten-pymarkdownlnt
+          path: /tmp/out/formula.rb
+          if-no-files-found: error
+          retention-days: 1
+
+  # Publishes what the job above produced, on a fresh runner that has never run
+  # upstream code. No brew here at all: it checks the repo out, drops the one file
+  # into a path this job chooses, and opens the PR.
+  bump-python-pr:
+    needs: bump-python
+    if: needs.bump-python.outputs.version != ''
+    runs-on: ubuntu-latest
+    permissions: {}
+    env:
+      FORMULA: pymarkdownlnt
+      VERSION: ${{ needs.bump-python.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rewritten-pymarkdownlnt
+          path: /tmp/in
+
+      - name: Open the bump PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
+        run: |
+          set -euo pipefail
+          # VERSION crosses from the other job, so constrain it before it becomes a
+          # ref name. It only ever reaches a branch name and a PR title — the file
+          # path is the constant above — so the blast radius of a bad value is a
+          # badly-named branch, not a wrong file.
+          version_re='^[A-Za-z0-9][A-Za-z0-9._+-]*$'
+          [[ "$VERSION" =~ $version_re ]] \
+            || { echo "::error::version has an unexpected shape"; exit 1; }
+
+          cp /tmp/in/formula.rb "Formula/${FORMULA}.rb"
+          if git diff --quiet -- "Formula/${FORMULA}.rb"; then
+            echo "No changes to Formula/${FORMULA}.rb; nothing to open."
+            exit 0
+          fi
+
+          branch="bump-${FORMULA}-${VERSION}"
           if git ls-remote --exit-code --heads \
                "https://github.com/${GITHUB_REPOSITORY}" "$branch" >/dev/null 2>&1; then
             # ::warning:: rather than a silent skip: a bump PR that never merges
@@ -145,18 +196,21 @@ jobs:
             exit 0
           fi
 
-          cd "$tap_dir"
-          # `--commit` skips Homebrew's own unshallow, and a shallow clone cannot
-          # push history the remote does not already have.
-          if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
-            git fetch --unshallow origin
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add "Formula/${FORMULA}.rb"
+          git commit -m "chore(${FORMULA}): bump to ${VERSION}"
+
+          # PAT rather than github.token on purpose: a PR opened by github.token
+          # does not trigger workflows, so brew test-bot would never run and
+          # auto-merge would never fire.
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" \
             "HEAD:refs/heads/${branch}"
 
           gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
             --title "${FORMULA} ${VERSION}" \
-            --body "Automated bump to ${VERSION} by the livecheck cron. Resource stanzas regenerated by \`brew bump-formula-pr\`."
+            --body "Automated bump to \`${VERSION}\` by the livecheck cron. Resource stanzas regenerated by \`brew bump-formula-pr\` in a job that held no credentials."
 
   # Casks need a separate job: dawidd6/action-homebrew-bump-formula is formula-only
   # (no `cask:` input), so the jobs above can never bump a cask. Runs on macOS because
@@ -175,10 +229,15 @@ jobs:
   # tampered download cannot forge, so it runs before any PR is opened.
   bump-casks:
     runs-on: macos-latest
-    # Same reason as bump-python: setup-homebrew would otherwise leave the job's
-    # `contents: write` token in HOMEBREW_GITHUB_API_TOKEN for every later step,
-    # including the one that mounts vendor-controlled media. The steps that need a
+    # Same reason as bump-python: setup-homebrew copies `github.token` into
+    # HOMEBREW_GITHUB_API_TOKEN for every later step, including the one that mounts
+    # vendor-controlled media, so keep it powerless. The steps that need a
     # credential name the PAT explicitly.
+    #
+    # Not split across jobs the way bump-python is: nothing here executes upstream
+    # code. The DMG is downloaded, hashed and read-only mounted, never run. The
+    # residual is the filesystem driver parsing an untrusted image, which a job
+    # boundary would not remove either.
     permissions: {}
     steps:
       - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
