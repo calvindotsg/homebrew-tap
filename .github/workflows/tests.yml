@@ -30,7 +30,9 @@ jobs:
           set -euo pipefail
           rc=0
           for f in Formula/*.rb; do
-            tags=$(grep -oE 'releases/download/[^/"]+/' "$f" | sed 's|releases/download/||; s|/$||' | sort -u)
+            # `|| true` on both pipelines: grep exits 1 when a formula has no
+            # GitHub release URLs at all, which under pipefail would abort the job.
+            tags=$(grep -oE 'releases/download/[^/"]+/' "$f" | sed 's|releases/download/||; s|/$||' | sort -u || true)
             count=$(printf '%s\n' "$tags" | grep -c . || true)
             if [ "$count" -gt 1 ]; then
               joined=$(printf '%s\n' "$tags" | tr '\n' ' ')

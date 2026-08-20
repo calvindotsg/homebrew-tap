@@ -250,7 +250,9 @@ jobs:
             ok=1
             codesign --verify --strict --deep "$app" || ok=0
             spctl -a -t open --context context:primary-signature "$app" || ok=0
-            team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            # `|| true` so an unsigned bundle reaches the explicit comparison below
+            # rather than aborting the step with no explanation.
+            team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p' || true)
             hdiutil detach -quiet "$mnt" || true
 
             if [ "$ok" -ne 1 ]; then
