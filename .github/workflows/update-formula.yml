@@ -19,26 +19,31 @@ on:
         type: choice
         options: [python, node]
 
-permissions:
-  contents: write
+# Nothing here uses the ambient GITHUB_TOKEN. The half that runs upstream code
+# holds no credential at all, and the half that publishes authenticates with the
+# tap PAT. Note that `permissions:` governs `github.token` only — it must also be
+# set per job, because Homebrew/actions/setup-homebrew (used by livecheck.yml)
+# copies `github.token` into HOMEBREW_GITHUB_API_TOKEN for the whole job.
+permissions: {}
 
 concurrency:
   group: formula-update
   cancel-in-progress: false
 
 jobs:
-  update:
+  # Everything that touches the dispatched URL — downloading it, and for Python
+  # formulae `pip install`ing it, which executes the sdist's PEP 517 backend.
+  # No secret and no writable token is in scope for any of it. The only thing
+  # that leaves this job is one file.
+  prepare:
     runs-on: ubuntu-latest
+    permissions: {}
     env:
       FORMULA: ${{ github.event.client_payload.formula || inputs.formula }}
       VERSION: ${{ github.event.client_payload.version || inputs.version }}
       URL: ${{ github.event.client_payload.url || inputs.url }}
       TYPE: ${{ github.event.client_payload.type || inputs.type }}
     steps:
-      # persist-credentials: false keeps the push token out of .git/config, so it
-      # is not readable by the `pip install "$URL"` step below, which builds an
-      # upstream sdist and therefore runs upstream code. The push step
-      # re-authenticates explicitly with the job's own GITHUB_TOKEN.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -127,6 +132,8 @@ jobs:
               f.write(content)
           PYEOF
 
+      # This is the step that runs upstream code: `pip install "$URL"` builds the
+      # sdist, which executes its PEP 517 backend.
       - name: Update Python resource blocks
         if: env.TYPE == 'python'
         shell: bash
@@ -174,18 +181,95 @@ jobs:
             echo "::warning::poet failed (package may not be on PyPI). Resource blocks unchanged."
           fi
 
-      # `git diff --exit-code && echo ... && exit 0` is deliberate: under `bash -e`
-      # a failing command in an && list that is not the final command is exempt
-      # from errexit, so a dirty tree falls through to the commit below.
-      - name: Commit and push
+      # Hand off exactly one file, under a fixed name. The publishing job decides
+      # where it goes, so nothing produced here can choose its own destination.
+      - name: Stage the rewritten formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/out
+          cp "Formula/$FORMULA.rb" /tmp/out/formula.rb
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rewritten-formula
+          path: /tmp/out/formula.rb
+          if-no-files-found: error
+          retention-days: 1
+
+  # Publishes the result. Runs on a fresh runner, checks out again, and executes
+  # nothing from upstream — so the PAT never shares a machine, a $HOME or a git
+  # config with the code that ran above.
+  open-pr:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions: {}
+    env:
+      # Re-read from the event rather than from `prepare`'s outputs: a job output
+      # is written by a step that ran alongside the untrusted one, whereas the
+      # event payload is fixed by GitHub before either job starts.
+      FORMULA: ${{ github.event.client_payload.formula || inputs.formula }}
+      VERSION: ${{ github.event.client_payload.version || inputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Re-validate before using the payload as a path
+        shell: bash
+        run: |
+          set -euo pipefail
+          formula_re='^[a-z0-9][a-z0-9._-]*$'
+          version_re='^[A-Za-z0-9][A-Za-z0-9._+-]*$'
+          [[ "$FORMULA" =~ $formula_re ]] && [[ "$FORMULA" != *..* ]] \
+            || { echo "::error::formula name has an unexpected shape"; exit 1; }
+          test -f "Formula/$FORMULA.rb" \
+            || { echo "::error::no such formula in this tap"; exit 1; }
+          [[ "$VERSION" =~ $version_re ]] \
+            || { echo "::error::version has an unexpected shape"; exit 1; }
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rewritten-formula
+          path: /tmp/in
+
+      - name: Open the bump PR
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
         run: |
-          git diff --exit-code && echo "No changes" && exit 0
           set -euo pipefail
+          cp /tmp/in/formula.rb "Formula/$FORMULA.rb"
+
+          if git diff --quiet -- "Formula/$FORMULA.rb"; then
+            echo "No changes to Formula/$FORMULA.rb; nothing to open."
+            exit 0
+          fi
+
+          # `bump-` prefix so automerge.yml's pre-filter sees it; the strict
+          # authorization there is on the tested commit, not on this name.
+          safe=$(printf '%s' "${VERSION#v}" | tr -c 'A-Za-z0-9._-' '-')
+          branch="bump-${FORMULA}-${safe}"
+
+          if git ls-remote --exit-code --heads \
+               "https://github.com/${GITHUB_REPOSITORY}" "$branch" >/dev/null 2>&1; then
+            echo "::warning::${FORMULA}: branch $branch already exists upstream — an earlier bump PR is still open. Not re-pushing."
+            exit 0
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
           git add "Formula/$FORMULA.rb"
           git commit -m "chore($FORMULA): bump to $VERSION"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" HEAD:main
+
+          # Pushed and opened with the tap PAT rather than github.token on purpose:
+          # a PR opened by github.token does not trigger workflows, so brew test-bot
+          # would never run and auto-merge would never fire — the PR would sit open
+          # and its branch would collide with the next dispatch.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" \
+            "HEAD:refs/heads/${branch}"
+
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+            --title "$FORMULA $VERSION" \
+            --body "Automated bump to \`$VERSION\`, dispatched by the source repository. URL and checksum recomputed, and Python resource stanzas regenerated, in a job that held no credentials."
