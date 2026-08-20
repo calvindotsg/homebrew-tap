@@ -150,12 +150,21 @@ jobs:
           with open("/tmp/resources.rb") as f:
               resources = f.read().strip()
 
-          content = re.sub(
+          content, n_res = re.subn(
               r'(  resource .+?)(\n\n  def install)',
               lambda m: resources + m.group(2),
               content,
+              count=1,
               flags=re.DOTALL,
           )
+          # Guarded on `resources` because a dependency-free Python formula legitimately
+          # has no resource stanzas for poet to replace — that is n_res == 0 and correct.
+          # Without the assertion, a change to the formula's layout would break the anchor
+          # and this step would report success while committing a version bump whose
+          # resource pins are still the old ones.
+          if resources and n_res != 1:
+              print("::error::could not locate the resource stanzas to replace; formula layout changed")
+              raise SystemExit(1)
 
           with open(path, "w") as f:
               f.write(content)
