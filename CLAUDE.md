@@ -9,9 +9,14 @@ Casks/                          Homebrew cask definitions (.rb)
   update-formula.yml            Automated formula update (dispatch + manual)
   update-cask.yml               Manual cask update (dispatch; firefoo-only, see below)
   livecheck.yml                 Daily cron: `bump` (non-Python formulae) + `bump-python`
-                                (pymarkdownlnt) + `bump-casks` (non-auto-updating casks)
+                                → `bump-python-pr` + `bump-casks` (non-auto-updating casks)
 .github/dependabot.yml          Weekly refresh of the workflows' action SHA pins
 ```
+
+**Every write to `main` goes through a pull request.** No workflow pushes to `main`
+any more, and no job holds a writable ambient token — `permissions: {}` everywhere,
+with the tap PAT named explicitly by the few steps that publish. Bot lanes land via
+`automerge.yml` once `brew test-bot` passes.
 
 Tap name `calvindotsg/tap` maps to this repo via Homebrew's `homebrew-` prefix convention.
 
@@ -29,7 +34,9 @@ Tap name `calvindotsg/tap` maps to this repo via Homebrew's `homebrew-` prefix c
 
 Automated via `update-formula.yml`. Triggered automatically by source repos on release via `repository_dispatch`, or manually via GitHub Actions UI (`workflow_dispatch`).
 
-**Automatic flow:** Source repo release → `bump-tap` job dispatches → `update-formula.yml` runs → URL/sha256 updated → committed and pushed.
+**Automatic flow:** Source repo release → `bump-tap` job dispatches → `update-formula.yml` `prepare` job validates the payload, recomputes the checksum and (for `type: python`) regenerates resource stanzas → hands one file to `open-pr` → PR opened → `brew test-bot` → `automerge.yml` squashes it.
+
+The two jobs exist for one reason: `prepare` runs `pip install "$URL"`, which executes the sdist's build backend, and a step boundary is not a credential boundary. Separate jobs get separate machines, and the only thing that crosses between them is a single file under a fixed name — the destination path is chosen by `open-pr`, never by the artifact.
 
 **Manual fallback:** Actions tab → "Update formula" → Run workflow → enter formula name, version tag, tarball URL, type (python/node).
 
@@ -75,9 +82,9 @@ Manual trigger via Actions UI or CLI:
 
     gh workflow run update-cask.yml -f cask=firefoo -f version=1.6.0
 
-Leave `version` empty to auto-detect via `brew livecheck`. The workflow computes arch-specific SHA256s automatically.
+Leave `version` empty to auto-detect via `brew livecheck`. The workflow computes arch-specific SHA256s automatically, then opens a `bump-firefoo-<version>` PR — it no longer pushes to `main`.
 
-Note: `update-cask.yml`'s SHA step hardcodes Firefoo's download-URL pattern, so it only supports **firefoo**. `littlebird` deliberately bypasses it — `auto_updates true` means the app self-updates, and `brew livecheck --cask` surfaces new versions for a human to act on.
+Note: `update-cask.yml` now **fails closed for any cask other than firefoo**, because its SHA step hardcodes Firefoo's download-URL pattern and would otherwise write the checksum of a 404 body into some other cask. `littlebird` deliberately bypasses it — `auto_updates true` means the app self-updates, and `brew livecheck --cask` surfaces new versions for a human to act on.
 
 **Non-auto-updating casks do NOT go through this workflow.** They are bumped automatically by the `bump-casks` job in `livecheck.yml` (see below), which derives everything from the cask's own `url` and `livecheck` stanzas. This supersedes the previous instruction to generalize `update-cask.yml`'s SHA step first — that is no longer a prerequisite. `update-cask.yml` remains a firefoo-only manual escape hatch.
 
@@ -89,6 +96,20 @@ Casks cannot ride the `bump` job: [`dawidd6/action-homebrew-bump-formula@v5`](ht
 - **Only casks without `auto_updates true`** belong in its `for cask in …` list. `firefoo` and `littlebird` self-update, so Homebrew deliberately does not own their upgrades; `tmog` cannot self-update, so it does. Adding a new non-auto-updating cask = append its token to that list **and** add its Developer ID Team Identifier to `expected_team_for` in the verification step (`codesign -dv <app> 2>&1 | sed -n 's/^TeamIdentifier=//p'` to read it). A cask with no pinned Team ID fails the job rather than bumping unverified.
 - The job pushes `bump-<cask>-<version>` branches itself (`--write-only --commit` writes and commits but opens nothing), normalising characters that are not valid in a ref — `tmog`'s `version,build` composite among them. The `bump-` prefix keeps them inside `automerge.yml`'s pre-filter.
 - When a cask is already current, `--newer-only` returns `[]`, `jq` yields empty, and the loop logs "already current" and exits 0.
+- **Verify the bundle the cask *installs*, not whichever `.app` the image lists first.** Code signing is a property of a bundle, not of its path, so a renamed copy of the vendor's own genuine app passes `codesign`, `spctl` and the Team ID check while `app "…"` installs a different one — forgeable without any signing identity. The job resolves the name from the cask's own stanza: `brew info --json=v2 --cask <token> | jq -r '[.casks[0].artifacts[] | .app[]? | select(type == "string")][0]'`.
+
+#### When `bump-casks` fails on a Team ID mismatch
+
+The job is fail-closed by design, so a red run means *either* the vendor rotated their Developer ID *or* the download is not what the vendor published. Do not just re-pin the new value — that turns the control off. Establish which it is:
+
+1. Read what the job actually saw: the error names the observed and expected Team IDs.
+2. Fetch the artifact yourself from the vendor's canonical URL over a different network path, mount it, and read the identity:
+   `codesign -dv --verbose=4 "/Volumes/…/<App>.app" 2>&1 | grep -E 'Authority|TeamIdentifier'`
+3. Corroborate the new identity *out of band* — a release note, a signed announcement, the vendor's support channel. A new Team ID that only the download attests to is exactly the case this check exists to catch.
+4. Confirm notarization independently: `spctl -a -t open --context context:primary-signature -v <App>.app` should report `source=Notarized Developer ID`.
+5. Only then update `expected_team_for` in `livecheck.yml`, in a PR that records *why* in the commit body.
+
+Until it is resolved the cask simply does not bump, which is the safe direction. `tmog` is pinned to `25BPDA4NQ3` (Developer ID Application: David Plummer).
 
 ## Service Formulas
 
@@ -105,11 +126,11 @@ Templates in this tap worth copying/adapting into other Homebrew taps or formula
 - **Release-manifest cask (`:json` livecheck + `version,build`)** — see `Casks/tmog.rb`. Upstream publishes `release.json` carrying `version`, `build`, `sha256` and a **versioned** artifact path alongside a rolling unversioned one. Pin the *versioned* URL (immutable — no checksum drift when upstream re-publishes), encode `version "<version>,<build>"` and rebuild the filename with `version.csv.first` / `.csv.second`, and have the `livecheck` block return the same composite so comparisons line up. Use when a vendor ships its own update manifest instead of a Sparkle appcast or GitHub releases. **Finding the manifest:** don't guess URL paths — `strings -a "<App>.app/Contents/MacOS/<bin>" | grep -oiE 'https?://[a-z0-9./_-]+'`. A "Check for Updates…" menu item proves an endpoint exists; TMOG's sat under `/downloads/`, which root-level path guessing missed entirely.
 - **Deciding `auto_updates`** — it is a factual claim that the app *installs* updates itself, not that it checks. `otool -L` for a linked Sparkle/Squirrel framework, `Contents/Resources/app-update.yml` for electron-updater, and `strings` for download/install/restart wording. TMOG has a "Check for Updates…" menu item but only check-and-report strings, so it omits `auto_updates` and Homebrew owns its upgrades. Getting this wrong is doubly bad: the claim is false *and* `brew upgrade` silently skips the cask.
 - **Service formula (launchd via `service do`)** — see `Formula/mac-upkeep.rb`. Cron DSL accepts only single ints per field (see Non-Obvious Constraints below).
-- **Auto-bump via source-repo dispatch** — see `.github/workflows/update-formula.yml` + source-repo `bump-tap` job pattern (`calvindotsg/mac-upkeep/.github/workflows/release.yml`). For Calvin-owned formulas.
-- **Scheduled livecheck cron (third-party)** — see `.github/workflows/livecheck.yml`. `dawidd6/action-homebrew-bump-formula@v5` with `livecheck: true`. Daily 07:00 UTC. For formulas whose source repos Calvin doesn't control.
+- **Auto-bump via source-repo dispatch** — see `.github/workflows/update-formula.yml` + source-repo `bump-tap` job pattern (`calvindotsg/mac-upkeep/.github/workflows/release.yml`). For Calvin-owned formulas. **Copy the whole shape, not just the happy path:** every `client_payload` field is attacker-supplied to the workflow and lands in a file path, a shell command and Ruby source, so validate each against an expected shape and an allowlisted host before use; do the file rewrites with callable `re.subn` replacements and assert the match count; and keep the job that `pip install`s the dispatched URL in a *different job* from the one holding the publish credential.
+- **Scheduled livecheck cron (third-party)** — see `.github/workflows/livecheck.yml`. `dawidd6/action-homebrew-bump-formula` with `livecheck: true`. Daily 07:00 UTC. For formulas whose source repos Calvin doesn't control. **Two requirements travel with this pattern:** set `permissions: {}` on every job (see Non-Obvious Constraints — `setup-homebrew` otherwise hands a writable token to any upstream code the job runs), and split a PyPI-sourced formula's bump into a credential-free `--write-only` job plus a publishing job, since resource regeneration executes upstream build backends.
 - **Explicit third-party `formula:` list in livecheck** — scope the cron to non-Calvin-owned formulas by enumerating them (currently `opensrc` and `cloudflare-cf` in the `bump` job; `pymarkdownlnt` has its own `bump-python` job). Avoids races with the `repository_dispatch` path used by Calvin-owned formulas.
 - **`brew test-bot` PR CI** — see `.github/workflows/tests.yml`. Canonical `tap-new` template (ubuntu + macOS matrix); builds only changed formulae. Gates the auto-merge below.
-- **Auto-merge `bump-*` PRs with branch deletion** — see `.github/workflows/automerge.yml`. `workflow_run`-gated on test-bot success; squash + `--delete-branch`. Stops the stale-branch non-fast-forward failures that pile up when livecheck bump PRs go unmerged.
+- **Auto-merge `bump-*` PRs with branch deletion** — see `.github/workflows/automerge.yml`. `workflow_run`-gated on test-bot success; squash + `--delete-branch`. Stops the stale-branch non-fast-forward failures that pile up when livecheck bump PRs go unmerged. **Authorize on the commit, never on the branch name.** A `workflow_run` job is privileged, and `head_branch` is a string any outsider can choose; `gh pr list --head` matches it across repositories, so a name-keyed lookup can resolve to a different PR than the one whose tests passed. Resolve by `headRefOid == workflow_run.head_sha`, check `head_repository.full_name == github.repository`, and pass `--match-head-commit`. Keep the `startsWith(head_branch, 'bump-')` condition as a cheap pre-filter only.
 
 ## Non-Obvious Constraints
 
@@ -127,6 +148,10 @@ Templates in this tap worth copying/adapting into other Homebrew taps or formula
 - **A Python formula in the livecheck cron needs its python keg installed in CI.** `brew bump-formula-pr` unconditionally calls `PyPI.update_python_resources!`, which shells out to `<python@3.x keg>/bin/python -m pip install --dry-run` to re-resolve resources. `formula_opt_libexec` constructs that path with no installed-check, and `dawidd6/action-homebrew-bump-formula` never passes `--install-dependencies`, so on a bare `ubuntu-latest` runner the call fails and the job goes red. The `bump-python` job in `.github/workflows/livecheck.yml` therefore runs `brew install python@3.13` before `brew bump-formula-pr`. Keep that version in step with `depends_on "python@3.x"` in the formula.
 - **Source a third-party Python formula from the PyPI sdist, not the GitHub tag.** `bump-formula-pr` passes `ignore_non_pypi_packages: true`, and `valid_pypi_package?` requires the main `url` to start with `https://files.pythonhosted.org/packages/`. With a GitHub tarball URL the cron bumps `url`/`sha256` and **silently skips every resource stanza** — automerge then lands a version bump whose dependencies are frozen at the old versions. A pythonhosted URL also auto-matches the `Pypi` livecheck strategy, so no `livecheck do` block is needed.
 - `poet -r <package>` calls PyPI API for the main package. If not on PyPI, the workflow falls back to updating only URL/sha256 (resource blocks unchanged). Warning logged via `::warning::`.
-- **`repository_dispatch` provides read-only GITHUB_TOKEN** — the workflow must declare `permissions: contents: write` to push. Without this, `git push` fails with "Permission denied to github-actions[bot]."
+- **A Homebrew CI job that runs any upstream code needs `permissions: {}`.** `Homebrew/actions/setup-homebrew` defaults its `brew-gh-api-token` input to `${{ github.token }}` and its `main.sh` writes `HOMEBREW_GITHUB_API_TOKEN=<that>` into `$GITHUB_ENV` — job-wide, for every later step. And `HOMEBREW_*` is precisely what survives `brew`'s `env -i` re-exec into subprocesses, while `GITHUB_*` is stripped (checked by running it). So a job declaring `contents: write` silently hands a repo-writable token to every `pip` build backend it invokes. Splitting the work across steps does **not** help; only removing the scopes does. Verified live: with `permissions: {}` the job is granted `Metadata: read` and nothing else, and `brew tap` / `brew trust` / `brew install` / `brew livecheck` all still work, because bottles come from ghcr.io under Homebrew's own hardcoded anonymous `HOMEBREW_GITHUB_PACKAGES_AUTH="Bearer QQ=="` (`brew.sh`).
+- **A PR opened with `GITHUB_TOKEN` will not drive an unattended merge.** Per GitHub's docs, `GITHUB_TOKEN`-triggered events either create no workflow run at all or — for `pull_request` `opened`/`synchronize`/`reopened` — create one that **requires approval**. Either way `brew test-bot` does not run unattended, so `automerge.yml` never fires and the branch lingers to collide with the next run. Bot lanes here therefore push and open PRs with `CALVINDOTSG_TAP_LIVECHECK_PAT`, not `github.token`. (`workflow_dispatch` and `repository_dispatch` are the documented exceptions.)
+- **`shell: bash` cuts both ways.** The Actions default `run:` shell is `bash -e` with **no** `pipefail`, so `X=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)` can never fail and a 404 body gets hashed and committed. Declaring `shell: bash` gives `bash --noprofile --norc -eo pipefail` — but then a `grep` that legitimately matches nothing kills the step with no output. Absorb those at the call site (`... | sort -u || true`) and test any such block under the runner's real flags: `bash --noprofile --norc -eo pipefail script.sh`. A plain `#!/bin/bash` test passes and proves nothing.
+- **`brew bump-formula-pr --write-only` takes no git action at all**, and `--commit` is what makes it commit (`return if args.write_only? && !args.commit?`). With `--commit`, `Homebrew::Bump.create_pr` skips its own `git checkout -b` *and* returns before pushing, so the commit lands on the tap clone's current branch at `$(brew --repo <tap>)` — not in `$GITHUB_WORKSPACE` and not on a `bump-*` branch. It also raises `UsageError` without `--version`. If a workflow only needs the rewritten file, pass `--write-only` alone and let a separate job commit it.
+- **`persist-credentials: false` breaks a bare `git push`.** `actions/checkout`'s default leaves a token in `.git/config`'s `http.extraheader`, and a step that just runs `git push` depends entirely on it. Setting the flag without re-authenticating the push in the same change is half a fix that fails at the last step.
 - **GitHub Actions re-runs replay old workflow YAML** — if you fix a workflow bug and re-run the failed run, the fix is NOT applied. Trigger a fresh `workflow_dispatch` run instead.
 - **Concurrency group** `formula-update` with `cancel-in-progress: false` queues simultaneous dispatches from multiple source repos, preventing push conflicts.
