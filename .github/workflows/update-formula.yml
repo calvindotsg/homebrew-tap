@@ -184,7 +184,27 @@ jobs:
           with open(path) as f:
               content = f.read()
           with open("/tmp/resources.rb") as f:
-              resources = f.read().strip()
+              # rstrip, never strip. `brew update-python-resources` emits blocks that
+              # are already indented two spaces to sit in a formula body — pypi.rb
+              # builds each one from a `<<-EOS` heredoc whose content lines carry the
+              # indent literally — and the anchor below matches `  resource `, so the
+              # replacement has to supply those two spaces back. Stripping them put the
+              # first block at column 0. That still parses as Ruby, which is what made
+              # it quiet: nothing failed here, and the only symptom was `open-pr`'s
+              # shape allowlist rejecting the diff with
+              # `unexpected change in Formula/<name>.rb: +resource "..." do`.
+              resources = f.read().rstrip()
+
+          # The indent is a contract with Homebrew's output, so assert it rather than
+          # letting a future change to pypi.rb surface three jobs downstream as an
+          # opaque allowlist rejection. This also catches a `# RESOURCE-ERROR:` line,
+          # which pypi.rb emits ahead of the blocks when it cannot resolve a package —
+          # a placeholder for a human, never something to commit.
+          if resources and not resources.startswith("  resource "):
+              first = resources.splitlines()[0]
+              print(f"::error::update-python-resources output starts with {first!r}, "
+                    "not an indented resource block; refusing to splice it")
+              raise SystemExit(1)
 
           content, n_res = re.subn(
               r'(  resource .+?)(\n\n  def install)',
