@@ -35,63 +35,148 @@ jobs:
       URL: ${{ github.event.client_payload.url || inputs.url }}
       TYPE: ${{ github.event.client_payload.type || inputs.type }}
     steps:
-      - uses: actions/checkout@v4
+      # persist-credentials: false keeps the push token out of .git/config, so it
+      # is not readable by the `pip install "$URL"` step below, which builds an
+      # upstream sdist and therefore runs upstream code. The push step
+      # re-authenticates explicitly with the job's own GITHUB_TOKEN.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      # Every value below arrives in a repository_dispatch client_payload and is
+      # interpolated into a file path, a shell command and Ruby source. Constrain
+      # each one to the shape it is supposed to have before any of that happens.
+      - name: Validate dispatch payload
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          formula_re='^[a-z0-9][a-z0-9._-]*$'
+          version_re='^[A-Za-z0-9][A-Za-z0-9._+-]*$'
+          url_re='^https://(github\.com|codeload\.github\.com|registry\.npmjs\.org|files\.pythonhosted\.org)/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$'
+
+          [[ "$FORMULA" =~ $formula_re ]] \
+            || { echo "::error::formula name has an unexpected shape"; exit 1; }
+          [[ "$FORMULA" != *..* ]] \
+            || { echo "::error::formula name has an unexpected shape"; exit 1; }
+          test -f "Formula/$FORMULA.rb" \
+            || { echo "::error::no such formula in this tap"; exit 1; }
+
+          [[ "$VERSION" =~ $version_re ]] \
+            || { echo "::error::version has an unexpected shape"; exit 1; }
+
+          [[ "$URL" =~ $url_re ]] \
+            || { echo "::error::source URL is not on an expected host"; exit 1; }
+
+          case "$TYPE" in
+            python|node) ;;
+            *) echo "::error::type must be python or node"; exit 1 ;;
+          esac
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
 
+      # shell: bash is what turns on pipefail (the Actions default for `run:` is
+      # `bash -e` with pipefail OFF), so a failed download no longer leaves
+      # shasum hashing an error page. -f makes curl exit non-zero on 4xx/5xx in
+      # the first place, and the pattern check is the backstop.
       - name: Compute SHA256
         id: sha
+        shell: bash
         run: |
-          SHA256=$(curl -sL "$URL" | shasum -a 256 | cut -d ' ' -f1)
+          set -euo pipefail
+          SHA256=$(curl -fsSL --retry 3 "$URL" | shasum -a 256 | cut -d ' ' -f1)
+          [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "::error::did not get a usable checksum for the source URL"; exit 1; }
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
 
       - name: Update URL and SHA256
+        shell: bash
         env:
           SHA256: ${{ steps.sha.outputs.sha256 }}
         run: |
+          set -euo pipefail
           python3 << 'PYEOF'
-          import re, os
-          path = f"Formula/{os.environ['FORMULA']}.rb"
+          import os
+          import re
+
+          # basename() a second time even though the payload was validated: the
+          # path is what actually decides which file gets rewritten.
+          name = os.path.basename(os.environ["FORMULA"])
+          path = os.path.join("Formula", f"{name}.rb")
           url = os.environ["URL"]
           sha = os.environ["SHA256"]
-          content = open(path).read()
-          content = re.sub(r'(  url )".*?"', rf'\1"{url}"', content, count=1)
-          content = re.sub(r'(  sha256 )".*?"', rf'\1"{sha}"', content, count=1)
-          open(path, "w").write(content)
+
+          with open(path) as f:
+              content = f.read()
+
+          # A callable replacement is inserted literally. A plain rf"..." template
+          # would have re interpret backslashes and \1-style group references that
+          # happened to appear in the payload.
+          def literal(value):
+              return lambda m: m.group(1) + '"' + value + '"'
+
+          content, n_url = re.subn(r'(  url )".*?"', literal(url), content, count=1)
+          content, n_sha = re.subn(r'(  sha256 )".*?"', literal(sha), content, count=1)
+          if n_url != 1 or n_sha != 1:
+              print(f"::error::expected one url and one sha256 stanza, rewrote {n_url}/{n_sha}")
+              raise SystemExit(1)
+
+          with open(path, "w") as f:
+              f.write(content)
           PYEOF
 
       - name: Update Python resource blocks
         if: env.TYPE == 'python'
+        shell: bash
         run: |
+          # No -u here: `source .../activate` touches shell variables this script
+          # does not set, and an unbound-variable abort there is not a useful signal.
+          set -eo pipefail
           python3 -m venv /tmp/venv
           source /tmp/venv/bin/activate
           pip install "$URL" homebrew-pypi-poet
           if poet -r "$FORMULA" > /tmp/resources.rb 2>/dev/null; then
             python3 << 'PYEOF'
-          import re, os
-          path = f"Formula/{os.environ['FORMULA']}.rb"
-          content = open(path).read()
-          resources = open("/tmp/resources.rb").read().strip()
+          import os
+          import re
+
+          name = os.path.basename(os.environ["FORMULA"])
+          path = os.path.join("Formula", f"{name}.rb")
+
+          with open(path) as f:
+              content = f.read()
+          with open("/tmp/resources.rb") as f:
+              resources = f.read().strip()
+
           content = re.sub(
               r'(  resource .+?)(\n\n  def install)',
-              resources + r'\2',
+              lambda m: resources + m.group(2),
               content,
               flags=re.DOTALL,
           )
-          open(path, "w").write(content)
+
+          with open(path, "w") as f:
+              f.write(content)
           PYEOF
             echo "Resource blocks updated via poet"
           else
             echo "::warning::poet failed (package may not be on PyPI). Resource blocks unchanged."
           fi
 
+      # `git diff --exit-code && echo ... && exit 0` is deliberate: under `bash -e`
+      # a failing command in an && list that is not the final command is exempt
+      # from errexit, so a dirty tree falls through to the commit below.
       - name: Commit and push
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git diff --exit-code && echo "No changes" && exit 0
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "Formula/$FORMULA.rb"
           git commit -m "chore($FORMULA): bump to $VERSION"
-          git push
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" HEAD:main
