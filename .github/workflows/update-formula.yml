@@ -58,7 +58,11 @@ jobs:
 
           formula_re='^[a-z0-9][a-z0-9._-]*$'
           version_re='^[A-Za-z0-9][A-Za-z0-9._+-]*$'
-          url_re='^https://(github\.com|codeload\.github\.com|registry\.npmjs\.org|files\.pythonhosted\.org)/[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$'
+          # GitHub archives are constrained to the owner that actually dispatches
+          # here; a bare `github.com` host check would let a dispatch repoint a
+          # formula at any stranger's tarball. The two registries stay
+          # host-scoped because package names vary and the path is not ours.
+          url_re='^https://((github|codeload\.github)\.com/calvindotsg/|(registry\.npmjs\.org|files\.pythonhosted\.org)/)[A-Za-z0-9._~:/?#@!$&()*+,;=%-]+$'
 
           [[ "$FORMULA" =~ $formula_re ]] \
             || { echo "::error::formula name has an unexpected shape"; exit 1; }
@@ -143,7 +147,14 @@ jobs:
           set -eo pipefail
           python3 -m venv /tmp/venv
           source /tmp/venv/bin/activate
-          pip install "$URL" homebrew-pypi-poet
+          # homebrew-pypi-poet is pinned: it is CI-only (it never runs on a tap
+          # user's machine), its last release was 2018-02-23, and a name that
+          # dormant is the most takeover-prone dependency in this pipeline.
+          # Pinning is defence in depth only — `--require-hashes` provably does
+          # NOT cover `[build-system].requires` (pypa/pip#13984), so the build
+          # backend of "$URL" is still resolved unpinned. The control that
+          # actually bounds the outcome is the diff allowlist in `open-pr`.
+          pip install "$URL" 'homebrew-pypi-poet==0.10.0'
           if poet -r "$FORMULA" > /tmp/resources.rb 2>/dev/null; then
             python3 << 'PYEOF'
           import os
@@ -233,13 +244,72 @@ jobs:
           name: rewritten-formula
           path: /tmp/in
 
+      # The job split isolated the credential; it did not bound the outcome. The
+      # artifact is a whole formula file produced by a job that ran upstream code,
+      # and a formula's class body is evaluated by every `brew` command a tap user
+      # runs. So nothing from that artifact is committed until it has been checked
+      # here, by code that ran no third-party anything.
+      #
+      # Two layers. First the top-level url/sha256 are verified against trusted
+      # inputs rather than merely pattern-matched: the URL must equal the one the
+      # source repo dispatched, and the checksum is recomputed here from that URL —
+      # downloading and hashing, never executing. Then a shape allowlist over the
+      # remaining diff: a legitimate bump only ever rewrites url/sha256/version,
+      # strips `revision`, and adds/removes/reorders whole `resource` blocks whose
+      # URLs are on files.pythonhosted.org. Anything else — a `system` call, a
+      # `caveats` block, a resource pointed off pythonhosted — is new Ruby, and
+      # fails closed.
+      - name: Verify the artifact before committing it
+        shell: bash
+        env:
+          URL: ${{ github.event.client_payload.url || inputs.url }}
+        run: |
+          set -euo pipefail
+          cp /tmp/in/formula.rb "Formula/$FORMULA.rb"
+
+          file_url=$(sed -n 's/^  url "\(.*\)"$/\1/p' "Formula/$FORMULA.rb" | head -1)
+          if [ "$file_url" != "$URL" ]; then
+            echo "::error::formula url is '$file_url' but the dispatch said '$URL'"
+            exit 1
+          fi
+
+          expected=$(curl -fsSL --retry 3 "$URL" | shasum -a 256 | cut -d ' ' -f1)
+          file_sha=$(sed -n 's/^  sha256 "\([0-9a-f]\{64\}\)"$/\1/p' "Formula/$FORMULA.rb" | head -1)
+          if [ "$file_sha" != "$expected" ]; then
+            echo "::error::formula sha256 does not match a fresh hash of the dispatched URL"
+            exit 1
+          fi
+
+          rc=0
+          while IFS= read -r line; do
+            case "$line" in
+              '+++ '*|'--- '*|'@@ '*|'diff --git '*|'index '*) continue ;;
+              [+-]*) ;;
+              *) continue ;;
+            esac
+            body=${line:1}
+            if   [[ "$body" =~ ^\ \ url\ \".*\"$ ]]; then continue
+            elif [[ "$body" =~ ^\ \ sha256\ \"[0-9a-f]{64}\"$ ]]; then continue
+            elif [[ "$body" =~ ^\ \ version\ \"[A-Za-z0-9._+-]+\"$ ]]; then continue
+            elif [[ "$body" =~ ^\ \ revision\ [0-9]+$ ]]; then continue
+            elif [[ "$body" =~ ^\ \ resource\ \"[A-Za-z0-9._-]+\"\ do$ ]]; then continue
+            elif [[ "$body" =~ ^\ \ \ \ url\ \"https://files\.pythonhosted\.org/[^\"]*\"$ ]]; then continue
+            elif [[ "$body" =~ ^\ \ \ \ sha256\ \"[0-9a-f]{64}\"$ ]]; then continue
+            elif [[ "$body" =~ ^\ \ end$ ]]; then continue
+            elif [ -z "$body" ]; then continue
+            else
+              echo "::error::unexpected change in Formula/$FORMULA.rb: $line"
+              rc=1
+            fi
+          done < <(git diff -- "Formula/$FORMULA.rb")
+          exit "$rc"
+
       - name: Open the bump PR
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
         run: |
           set -euo pipefail
-          cp /tmp/in/formula.rb "Formula/$FORMULA.rb"
 
           if git diff --quiet -- "Formula/$FORMULA.rb"; then
             echo "No changes to Formula/$FORMULA.rb; nothing to open."
