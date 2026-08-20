@@ -12,10 +12,14 @@ class Opensrc < Formula
 
   depends_on :macos
 
+  # Keep this tag in step with the stable `url` above. `brew bump-formula-pr`
+  # only rewrites the top-level stable stanza, so this block does not move on
+  # its own; the `arch-consistency` job in .github/workflows/tests.yml fails the
+  # PR if the two tags ever diverge.
   on_macos do
     on_intel do
-      url "https://github.com/vercel-labs/opensrc/releases/download/v0.7.2/opensrc-darwin-x64"
-      sha256 "fb87e2fac9704b2a5a8d0512b3e28bf9321a95f7fdbd5ba894f683fd827e35db"
+      url "https://github.com/vercel-labs/opensrc/releases/download/v0.7.3/opensrc-darwin-x64"
+      sha256 "2b4fb2f43aceef9b01bed857a8aa029f96c3f67d57d5256ec702d1269a726b78"
     end
   end
 
