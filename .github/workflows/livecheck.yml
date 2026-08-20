@@ -27,7 +27,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     steps:
-      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # main
+      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
 
       - uses: dawidd6/action-homebrew-bump-formula@3428a0601bba3173ec0bdcc945be23fa27aa4c31 # v5
         with:
@@ -46,8 +46,10 @@ jobs:
   # that subprocess.
   #
   # The bump is therefore split in two: everything that runs upstream code runs
-  # with no credential in scope, and the credential appears only in the final
-  # step, which does nothing but push an already-written commit and open a PR.
+  # with no secret in scope and a zero-permission job token (see `permissions: {}`
+  # below — without it setup-homebrew hands that code a writable token), and the
+  # PAT appears only in the final step, which does nothing but push an
+  # already-written commit and open a PR.
   #
   # Notes on the invocation, all verified against Homebrew HEAD:
   #   * `--write-only` alone writes the file but takes no git action; `--commit`
@@ -63,10 +65,19 @@ jobs:
   #     in Formula/pymarkdownlnt.rb.
   bump-python:
     runs-on: ubuntu-latest
+    # Drops the job's ambient GITHUB_TOKEN to no permissions. This is load-bearing,
+    # not tidiness: Homebrew/actions/setup-homebrew defaults `brew-gh-api-token` to
+    # `${{ github.token }}` and its main.sh writes `HOMEBREW_GITHUB_API_TOKEN=<that>`
+    # into $GITHUB_ENV for the whole job — and `HOMEBREW_*` is exactly what survives
+    # brew's `env -i` re-exec into the pip subprocess, while `GITHUB_*` does not. So
+    # without this the workflow-level `contents: write` would be readable by every
+    # upstream sdist build backend, which is the thing this job exists to prevent.
+    # Everything here authenticates with the PAT instead, so no scopes are needed.
+    permissions: {}
     env:
       FORMULA: pymarkdownlnt
     steps:
-      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # main
+      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
 
       - name: Prepare Homebrew
         shell: bash
@@ -96,7 +107,13 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Write and commit the bump
-        # No credential is in scope here — this is the step that runs upstream code.
+        # This is the step that runs upstream code. No secret is in scope, and the
+        # job's ambient token has no permissions (see `permissions: {}` above), so a
+        # hostile build backend has nothing to read. Residual, and the reason the
+        # follow-up is to split this across jobs: a later step in this same job does
+        # hold the PAT, and a backend that can write $HOME or the tap clone could
+        # still influence it. Fully isolating that needs a separate job with a fresh
+        # checkout.
         if: steps.lc.outputs.version != ''
         shell: bash
         env:
@@ -121,7 +138,10 @@ jobs:
 
           if git ls-remote --exit-code --heads \
                "https://github.com/${GITHUB_REPOSITORY}" "$branch" >/dev/null 2>&1; then
-            echo "Branch $branch already exists upstream; leaving the open PR alone."
+            # ::warning:: rather than a silent skip: a bump PR that never merges
+            # would otherwise make this job report green every day while nothing
+            # actually bumps. It does not change the exit status.
+            echo "::warning::${FORMULA}: branch $branch already exists upstream — an earlier bump PR is still open. Not re-pushing."
             exit 0
           fi
 
@@ -155,8 +175,13 @@ jobs:
   # tampered download cannot forge, so it runs before any PR is opened.
   bump-casks:
     runs-on: macos-latest
+    # Same reason as bump-python: setup-homebrew would otherwise leave the job's
+    # `contents: write` token in HOMEBREW_GITHUB_API_TOKEN for every later step,
+    # including the one that mounts vendor-controlled media. The steps that need a
+    # credential name the PAT explicitly.
+    permissions: {}
     steps:
-      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # main
+      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
 
       - name: Write and commit outdated cask bumps
         id: bump
@@ -208,12 +233,14 @@ jobs:
           fi
 
       - name: Verify the signing identity of each bumped artifact
-        # No credential in scope: this step downloads and mounts vendor-controlled
-        # media. A cask whose Developer ID changed must never reach a PR.
+        # No secret in scope, and the job token has no permissions: this step
+        # downloads and mounts vendor-controlled media. A cask whose Developer ID
+        # changed must never reach a PR.
         if: steps.bump.outputs.any == 'true'
         shell: bash
         run: |
           set -euo pipefail
+          tap_dir=$(brew --repo calvindotsg/tap)
 
           # Pinned Apple Developer ID Team Identifier per cask. A cask with no entry
           # here fails closed, so adding a cask to the loop above without pinning its
@@ -226,12 +253,19 @@ jobs:
           }
 
           # Read on fd 3 so brew/codesign/hdiutil cannot swallow the remaining lines.
-          while IFS=$'\t' read -r cask version _sha <&3; do
+          while IFS=$'\t' read -r cask version sha <&3; do
             expected=$(expected_team_for "$cask")
             if [ -z "$expected" ]; then
               echo "::error::${cask}: no pinned Team ID; refusing to bump unverified."
               exit 1
             fi
+
+            # The bump loop resets the tap clone before each cask, so after it the
+            # working tree holds only the last one. `brew fetch` and `brew info`
+            # resolve a tap-qualified cask off disk, so check out this cask's own
+            # commit first or every cask but the last is verified against its
+            # pre-bump artifact.
+            git -C "$tap_dir" reset --hard "$sha"
 
             brew fetch --cask --force "calvindotsg/tap/${cask}"
             dmg=$(brew --cache --cask "calvindotsg/tap/${cask}")
@@ -239,10 +273,22 @@ jobs:
             mkdir -p "$mnt"
             hdiutil attach -nobrowse -quiet -readonly -mountpoint "$mnt" "$dmg"
 
-            app=$(find "$mnt" -maxdepth 1 -name '*.app' -print -quit)
-            if [ -z "$app" ]; then
+            # Verify the bundle the cask actually installs, named by its own `app`
+            # stanza — not whichever .app the image happens to list first. Signing is
+            # a property of the bundle, not of its path, so a renamed copy of the
+            # vendor's genuine app passes every check below while `app` installs a
+            # different one; picking by find order would verify the decoy.
+            app_rel=$(brew info --json=v2 --cask "calvindotsg/tap/${cask}" \
+                        | jq -r '[.casks[0].artifacts[] | .app[]? | select(type == "string")][0] // empty')
+            if [ -z "$app_rel" ]; then
               hdiutil detach -quiet "$mnt" || true
-              echo "::error::${cask}: no .app found in the downloaded image."
+              echo "::error::${cask}: cask declares no app stanza; cannot verify."
+              exit 1
+            fi
+            app="${mnt}/${app_rel}"
+            if [ ! -d "$app" ]; then
+              hdiutil detach -quiet "$mnt" || true
+              echo "::error::${cask}: image does not contain '${app_rel}', which is what the cask installs."
               exit 1
             fi
 
@@ -287,7 +333,9 @@ jobs:
             branch="bump-${cask}-${safe}"
             if git ls-remote --exit-code --heads \
                  "https://github.com/${GITHUB_REPOSITORY}" "$branch" >/dev/null 2>&1; then
-              echo "Branch $branch already exists upstream; leaving the open PR alone."
+              # ::warning:: so a stuck cask bump PR is visible rather than making
+              # this job look healthy forever. Does not change the exit status.
+              echo "::warning::${cask}: branch $branch already exists upstream — an earlier bump PR is still open. Not re-pushing."
               continue
             fi
             git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" \
