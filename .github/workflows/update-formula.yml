@@ -82,9 +82,21 @@ jobs:
             *) echo "::error::type must be python or node"; exit 1 ;;
           esac
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.13"
+      # Homebrew rather than actions/setup-python: resource regeneration is now done
+      # by `brew update-python-resources`, which needs brew and a python keg. The
+      # small rewrites below use the runner's preinstalled python3 and stdlib only.
+      - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
+        if: env.TYPE == 'python'
+
+      - name: Prepare Homebrew
+        if: env.TYPE == 'python'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew tap calvindotsg/tap
+          brew trust --tap calvindotsg/tap
+          # Keep in step with `depends_on "python@3.x"` in the Python formulae.
+          brew install python@3.13
 
       # shell: bash is what turns on pipefail (the Actions default for `run:` is
       # `bash -e` with pipefail OFF), so a failed download no longer leaves
@@ -136,26 +148,32 @@ jobs:
               f.write(content)
           PYEOF
 
-      # This is the step that runs upstream code: `pip install "$URL"` builds the
-      # sdist, which executes its PEP 517 backend.
+      # Resource regeneration. This still runs upstream code — `update-python-resources`
+      # shells out to `pip install --dry-run`, which builds candidate sdists and
+      # executes their PEP 517 backends — which is why this job holds no credential
+      # and why `open-pr` re-checks what comes out of it.
+      #
+      # It replaces `pip install "$URL" homebrew-pypi-poet` + `poet -r`, which had
+      # been failing in production since setuptools dropped `pkg_resources`: poet
+      # died at import, the old `::warning::` fallback swallowed it, and the affected
+      # formulae's resource pins silently froze while their bumps kept succeeding.
+      # Homebrew's own command has no such dependency, and it applies a release
+      # cooldown to the resolved dependencies that the previous path did not.
+      # `--ignore-main-package-cooldown` exempts only the formula's own package,
+      # which is ours and was just released on purpose.
       - name: Update Python resource blocks
         if: env.TYPE == 'python'
         shell: bash
         run: |
-          # No -u here: `source .../activate` touches shell variables this script
-          # does not set, and an unbound-variable abort there is not a useful signal.
-          set -eo pipefail
-          python3 -m venv /tmp/venv
-          source /tmp/venv/bin/activate
-          # homebrew-pypi-poet is pinned: it is CI-only (it never runs on a tap
-          # user's machine), its last release was 2018-02-23, and a name that
-          # dormant is the most takeover-prone dependency in this pipeline.
-          # Pinning is defence in depth only — `--require-hashes` provably does
-          # NOT cover `[build-system].requires` (pypa/pip#13984), so the build
-          # backend of "$URL" is still resolved unpinned. The control that
-          # actually bounds the outcome is the diff allowlist in `open-pr`.
-          pip install "$URL" 'homebrew-pypi-poet==0.10.0'
-          if poet -r "$FORMULA" > /tmp/resources.rb 2>/dev/null; then
+          set -euo pipefail
+          # Fails the job rather than warning. A silent fallback is exactly how the
+          # pins froze unnoticed: the bump still lands, so nothing looks wrong while
+          # users stop receiving upstream fixes.
+          if brew update-python-resources --print-only \
+               --ignore-main-package-cooldown \
+               --package-name="$FORMULA" \
+               --version="${VERSION#v}" \
+               "calvindotsg/tap/$FORMULA" > /tmp/resources.rb; then
             python3 << 'PYEOF'
           import os
           import re
@@ -176,7 +194,7 @@ jobs:
               flags=re.DOTALL,
           )
           # Guarded on `resources` because a dependency-free Python formula legitimately
-          # has no resource stanzas for poet to replace — that is n_res == 0 and correct.
+          # has no resource stanzas to replace — that is n_res == 0 and correct.
           # Without the assertion, a change to the formula's layout would break the anchor
           # and this step would report success while committing a version bump whose
           # resource pins are still the old ones.
@@ -187,9 +205,10 @@ jobs:
           with open(path, "w") as f:
               f.write(content)
           PYEOF
-            echo "Resource blocks updated via poet"
+            echo "Resource blocks regenerated via brew update-python-resources"
           else
-            echo "::warning::poet failed (package may not be on PyPI). Resource blocks unchanged."
+            echo "::error::brew update-python-resources failed for $FORMULA. Refusing to ship a version bump with frozen resource pins — resolve it and re-dispatch."
+            exit 1
           fi
 
       # Hand off exactly one file, under a fixed name. The publishing job decides

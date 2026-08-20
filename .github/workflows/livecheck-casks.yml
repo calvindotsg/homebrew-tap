@@ -149,10 +149,21 @@ jobs:
             # A single `-mountpoint` attach sees one volume, so a multi-volume image
             # could carry the bundle that actually installs on a volume this check
             # never looked at. Enumerate them all and search the union.
+            #
+            # `qn` on stdin and the UDTO fallback mirror dmg.rb:191-227 too: an image
+            # carrying a software licence agreement refuses a plain attach, and without
+            # this the cask would simply stop bumping the day a vendor adds one —
+            # fail-closed, but silently baffling.
             mnt_root="${RUNNER_TEMP}/mnt-${cask}"
             mkdir -p "$mnt_root"
-            mounts=$(hdiutil attach -plist -nobrowse -readonly -mountrandom "$mnt_root" "$dmg" \
-                       | plutil -convert json -o - - \
+            attach() { printf 'qn\n' | hdiutil attach -plist -nobrowse -readonly -mountrandom "$mnt_root" "$1" 2>/dev/null; }
+            if ! plist=$(attach "$dmg"); then
+              echo "${cask}: plain attach refused, converting (licence agreement?)"
+              cdr="${RUNNER_TEMP}/${cask}-converted"
+              hdiutil convert -quiet -format UDTO -o "$cdr" "$dmg"
+              plist=$(attach "${cdr}.cdr")
+            fi
+            mounts=$(printf '%s' "$plist" | plutil -convert json -o - - \
                        | jq -r '.["system-entities"][]? | .["mount-point"] // empty')
             detach_all() {
               while IFS= read -r m; do
@@ -169,54 +180,62 @@ jobs:
             # a property of the bundle, not of its path, so a renamed copy of the
             # vendor's genuine app passes every check below while `app` installs a
             # different one; picking by find order would verify the decoy.
-            app_rel=$(brew info --json=v2 --cask "calvindotsg/tap/${cask}" \
-                        | jq -r '[.casks[0].artifacts[] | .app[]? | select(type == "string")][0] // empty')
-            if [ -z "$app_rel" ]; then
+            # EVERY app entry, not just the first: a cask may declare more than one,
+            # and Homebrew installs all of them. Verifying `[0]` would leave the rest
+            # installed unchecked — the same defect class as inspecting one volume.
+            app_rels=$(brew info --json=v2 --cask "calvindotsg/tap/${cask}" \
+                         | jq -r '.casks[0].artifacts[] | .app[]? | select(type == "string")')
+            if [ -z "$app_rels" ]; then
               detach_all
               echo "::error::${cask}: cask declares no app stanza; cannot verify."
               exit 1
             fi
 
-            # Homebrew merges the volumes, so the same relative path appearing on
-            # two of them is ambiguous about which one wins. Refuse rather than guess.
-            app=""
-            hits=0
-            while IFS= read -r m; do
-              [ -n "$m" ] || continue
-              if [ -d "${m}/${app_rel}" ]; then
-                app="${m}/${app_rel}"
-                hits=$((hits + 1))
+            failed=0
+            while IFS= read -r app_rel; do
+              [ -n "$app_rel" ] || continue
+
+              # Homebrew merges the volumes, so the same relative path appearing on
+              # two of them is ambiguous about which one wins. Refuse rather than guess.
+              app=""
+              hits=0
+              while IFS= read -r m; do
+                [ -n "$m" ] || continue
+                if [ -d "${m}/${app_rel}" ]; then
+                  app="${m}/${app_rel}"
+                  hits=$((hits + 1))
+                fi
+              done <<< "$mounts"
+              if [ "$hits" -eq 0 ]; then
+                echo "::error::${cask}: no volume in the image contains '${app_rel}', which is what the cask installs."
+                failed=1; continue
               fi
-            done <<< "$mounts"
-            if [ "$hits" -eq 0 ]; then
-              detach_all
-              echo "::error::${cask}: no volume in the image contains '${app_rel}', which is what the cask installs."
-              exit 1
-            fi
-            if [ "$hits" -gt 1 ]; then
-              detach_all
-              echo "::error::${cask}: '${app_rel}' appears on ${hits} volumes; refusing to guess which one installs."
-              exit 1
-            fi
+              if [ "$hits" -gt 1 ]; then
+                echo "::error::${cask}: '${app_rel}' appears on ${hits} volumes; refusing to guess which one installs."
+                failed=1; continue
+              fi
 
-            team=""
-            ok=1
-            codesign --verify --strict --deep "$app" || ok=0
-            spctl -a -t open --context context:primary-signature "$app" || ok=0
-            # `|| true` so an unsigned bundle reaches the explicit comparison below
-            # rather than aborting the step with no explanation.
-            team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1 || true)
+              ok=1
+              codesign --verify --strict --deep "$app" || ok=0
+              spctl -a -t open --context context:primary-signature "$app" || ok=0
+              # `| head -1` matters: sed prints EVERY match, so a bundle crafted to emit
+              # a fake `TeamIdentifier=` line cannot smuggle one past the comparison —
+              # it would produce a multi-line value that never equals the expectation.
+              team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1 || true)
+
+              if [ "$ok" -ne 1 ]; then
+                echo "::error::${cask} ${version}: '${app_rel}' failed the code signature or notarization check."
+                failed=1; continue
+              fi
+              if [ "$team" != "$expected" ]; then
+                echo "::error::${cask} ${version}: '${app_rel}' signing Team ID is '${team}', expected '${expected}'."
+                failed=1; continue
+              fi
+              echo "${cask} ${version}: '${app_rel}' signed by ${team} and notarized."
+            done <<< "$app_rels"
+
             detach_all
-
-            if [ "$ok" -ne 1 ]; then
-              echo "::error::${cask} ${version}: code signature or notarization check failed."
-              exit 1
-            fi
-            if [ "$team" != "$expected" ]; then
-              echo "::error::${cask} ${version}: signing Team ID is '${team}', expected '${expected}'."
-              exit 1
-            fi
-            echo "${cask} ${version}: signed by ${team} and notarized."
+            [ "$failed" -eq 0 ] || exit 1
           done 3< "${RUNNER_TEMP}/bumped.tsv"
 
       - name: Push the commits and open the PRs

@@ -36,13 +36,50 @@ jobs:
     steps:
       - uses: Homebrew/actions/setup-homebrew@8f3d1ec8a696b3b9d9a6c3696b6c73033cab69e4 # 2026.08.14.1
 
+      # `brew bump` applies a per-strategy release cooldown; `brew bump-formula-pr`
+      # does not, and the action drives livecheck straight into it — so npm publish
+      # to a user's machine is a straight line. Measured on PR #37: cf@0.7.0 was
+      # published at 18:38 and merged at 05:38, eleven hours later, unattended.
+      #
+      # Defer an npm release younger than the window instead. Nothing is skipped
+      # permanently: the next cron picks it up once it has aged. Failing to reach
+      # the registry also defers, because the safe direction here is "don't bump".
+      - name: Apply an npm release cooldown
+        id: lane
+        shell: bash
+        env:
+          COOLDOWN_HOURS: "24"
+        run: |
+          set -euo pipefail
+          formulae="calvindotsg/tap/opensrc"
+
+          # npm records a publish timestamp per version; strip the fractional seconds
+          # jq's fromdateiso8601 will not accept, then compare in whole hours.
+          age=$(curl -fsSL --retry 3 https://registry.npmjs.org/cf 2>/dev/null \
+                  | jq -r '(.time[.["dist-tags"].latest] | sub("\\.[0-9]+Z$";"Z") | fromdateiso8601) as $p
+                           | ((now - $p) / 3600 | floor)' 2>/dev/null) || age=""
+          [[ "$age" =~ ^[0-9]+$ ]] || age=""
+
+          if [ -z "$age" ]; then
+            echo "::warning::cloudflare-cf: could not read npm publish time; deferring this run."
+          elif [ "$age" -lt "$COOLDOWN_HOURS" ]; then
+            echo "::notice::cloudflare-cf: newest npm release is ${age}h old (< ${COOLDOWN_HOURS}h); deferring to a later run."
+          else
+            echo "cloudflare-cf: newest npm release is ${age}h old; within policy."
+            formulae="${formulae}"$'\n'"calvindotsg/tap/cloudflare-cf"
+          fi
+
+          {
+            echo "formulae<<FORMULAE_EOF"
+            echo "$formulae"
+            echo "FORMULAE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: dawidd6/action-homebrew-bump-formula@3428a0601bba3173ec0bdcc945be23fa27aa4c31 # v5
         with:
           token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
           no_fork: true
-          formula: |
-            calvindotsg/tap/opensrc
-            calvindotsg/tap/cloudflare-cf
+          formula: ${{ steps.lane.outputs.formulae }}
           livecheck: true
 
   # pymarkdownlnt is sourced from a PyPI sdist, so `brew bump-formula-pr` calls
