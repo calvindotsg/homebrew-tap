@@ -1,5 +1,12 @@
 # homebrew-tap
 
+<picture>
+  <source media="(prefers-color-scheme: dark)"
+          srcset="https://raw.githubusercontent.com/calvindotsg/.github/main/social-preview/images/dark/homebrew-tap.png">
+  <img alt="homebrew-tap — one-line brew install for calvindotsg's macOS CLIs and casks"
+       src="https://raw.githubusercontent.com/calvindotsg/.github/main/social-preview/images/homebrew-tap.png">
+</picture>
+
 Personal Homebrew tap for calvindotsg.
 
 ## Install
