@@ -1,8 +1,8 @@
 class CloudflareCf < Formula
   desc "Unified CLI for the Cloudflare API (DNS, zones, Workers, R2, KV)"
   homepage "https://developers.cloudflare.com/"
-  url "https://registry.npmjs.org/cf/-/cf-0.7.0.tgz"
-  sha256 "f74e6b3e61a8eaf804971caeb9dec285274ee1474a0d33fe1b5ac48ac7a32cd3"
+  url "https://registry.npmjs.org/cf/-/cf-0.8.0.tgz"
+  sha256 "75d3b19ff1fb8610ca7caa45acd3a444e611fa0208efd2ebffc0aa0177e3dd5a"
   license "MIT"
 
   # Upstream publishes only the bundled `dist/` to npm — there is no public
