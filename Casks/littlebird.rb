@@ -5,8 +5,7 @@ cask "littlebird" do
   sha256 arm:   "31bdbed7b5f64a1ced9b4259dfa3adfd8523401b4c9445af71d754c8212d8790",
          intel: "694d25cd9ab0812864487dfb5cb88a13aa5122d1532d42882be7c540d15d3f46"
 
-  url "https://downloads.lilbirdai.com/#{arch}/Littlebird-Mac-#{arch}-#{version}-Installer.dmg",
-      verified: "downloads.lilbirdai.com/"
+  url "https://downloads.lilbirdai.com/#{arch}/Littlebird-Mac-#{arch}-#{version}-Installer.dmg"
   name "Littlebird"
   desc "Context-aware AI assistant that reads on-screen text across apps"
   homepage "https://littlebird.ai/"
