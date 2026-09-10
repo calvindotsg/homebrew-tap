@@ -53,7 +53,7 @@ jobs:
     # boundary would not remove either.
     permissions: {}
     steps:
-      - uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869 # 2026.08.24.1
+      - uses: Homebrew/actions/setup-homebrew@f8d4222eb633e65c2a0157383cf80861fc7fae7f # 2026.09.07.1
 
       - name: Write and commit outdated cask bumps
         id: bump
