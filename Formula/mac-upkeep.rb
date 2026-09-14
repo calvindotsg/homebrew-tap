@@ -6,6 +6,7 @@ class MacUpkeep < Formula
   url "https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/v4.0.2.tar.gz"
   sha256 "92b2881e2de63cf467ac3f3b18f07695e38f4bc15e6b57a334ddc797d468b991"
   license "MIT"
+  revision 1
 
   depends_on "python@3.13"
   # All task tools (gcloud, pnpm, uv, fish, mole) are optional.
@@ -55,7 +56,14 @@ class MacUpkeep < Formula
     run_type :cron
     cron "0 12 * * 1"
     run_at_load true
-    environment_variables PATH: std_service_path_env
+    # SHELL: ssh runs a ProxyCommand through $SHELL, and launchd hands agents the
+    # LOGIN shell. Under this job that meant every `ssh` to a Cloudflare-Access
+    # box started fish + the whole config.fish first, and fish 4.9.3 deadlocked
+    # there (`starship init … | source` reading a pipe it held both ends of),
+    # so the ProxyCommand never ran: 8/8 SSH tasks timed out on 2026-09-14 with
+    # SHELL=fish and 8/8 connected with SHELL=/bin/sh, same job, minutes apart.
+    # Tasks that need fish already name it (`shell = "fish --interactive -c"`).
+    environment_variables PATH: std_service_path_env, SHELL: "/bin/sh"
     log_path var/"log/mac-upkeep.log"
     error_log_path var/"log/mac-upkeep.log"
     process_type :background
