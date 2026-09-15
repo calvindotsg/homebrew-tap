@@ -3,8 +3,8 @@ class Pymarkdownlnt < Formula
 
   desc "GitHub Flavored Markdown compliant Markdown linter"
   homepage "https://github.com/jackdewinter/pymarkdown"
-  url "https://files.pythonhosted.org/packages/d4/aa/9f6ac3a91b5c02cedb5ada2ae12fddf4954fe3faab176941a68510e9830e/pymarkdownlnt-0.9.39.tar.gz"
-  sha256 "5f422d593244942e4b545b54b512f6b7e509f907752d707695c051bfe8584948"
+  url "https://files.pythonhosted.org/packages/60/ea/a784da505745c5eb19b7b6be62a0cee4c25c42ba72e010413a7ebaa40ca7/pymarkdownlnt-0.9.40.tar.gz"
+  sha256 "9e6b1137b9f4b496da10f838bc30f66e4c182a0bf53d93d3afce65a541ded091"
   license "MIT"
 
   # No `livecheck` block: the Pypi strategy auto-matches files.pythonhosted.org URLs
@@ -81,8 +81,8 @@ class Pymarkdownlnt < Formula
   end
 
   resource "wcwidth" do
-    url "https://files.pythonhosted.org/packages/34/74/c6428f875774288bec1396f5bfcbc2d925700a4dad61727fd5f2b12f249d/wcwidth-0.8.2.tar.gz"
-    sha256 "91fbef97204b96a3d4d421609b80340b760cf33e26da123ff243d76b1fda8dda"
+    url "https://files.pythonhosted.org/packages/36/57/ed58088fafdf4c55a0ad6bde846502567645424d7ebf325230b9237f4085/wcwidth-0.8.3.tar.gz"
+    sha256 "d128512515fbf4612e0ff21fd6380399210318b7b54a9af59dff8454cf9730eb"
   end
 
   def install
