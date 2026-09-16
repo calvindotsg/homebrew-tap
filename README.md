@@ -40,6 +40,7 @@ tap "calvindotsg/tap", trusted: true
 | Formula | Description | Install |
 |---------|-------------|---------|
 | [cloudflare-cf](https://blog.cloudflare.com/cf-cli-local-explorer/) (third-party) | Unified CLI for the Cloudflare API (DNS, zones, Workers, R2, KV) | `brew install calvindotsg/tap/cloudflare-cf` |
+| [grok-bot-cli](https://github.com/ScriptedAlchemy/grok-bot-cli) (third-party) | Manage Grok Bot agents, groups, and messages from the terminal | `brew install calvindotsg/tap/grok-bot-cli` |
 | [mac-upkeep](https://github.com/calvindotsg/mac-upkeep) | Automated macOS maintenance CLI (TOML-driven, weekly scheduler) | `brew install calvindotsg/tap/mac-upkeep` |
 | [opensrc](https://github.com/vercel-labs/opensrc) (third-party) | Fetch source code for packages to give coding agents deeper context | `brew install calvindotsg/tap/opensrc` |
 | [pymarkdownlnt](https://github.com/jackdewinter/pymarkdown) (third-party) | GitHub Flavored Markdown compliant Markdown linter | `brew install calvindotsg/tap/pymarkdownlnt` |
