@@ -6,7 +6,6 @@ class MacUpkeep < Formula
   url "https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/v4.1.0.tar.gz"
   sha256 "570e2b5e0fafe218d23705c875d93f3ba0cc2d384be6493fe2e054667aae8d1e"
   license "MIT"
-  revision 1
 
   depends_on "python@3.13"
   # All task tools (gcloud, pnpm, uv, fish, mole) are optional.
