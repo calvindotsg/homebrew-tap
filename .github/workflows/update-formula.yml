@@ -85,7 +85,7 @@ jobs:
       # Homebrew rather than actions/setup-python: resource regeneration is now done
       # by `brew update-python-resources`, which needs brew and a python keg. The
       # small rewrites below use the runner's preinstalled python3 and stdlib only.
-      - uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869 # 2026.08.24.1
+      - uses: Homebrew/actions/setup-homebrew@848c272c7bfe984a197bd4d16383f4c106ec61e6 # 2026.09.21.1
         if: env.TYPE == 'python'
 
       - name: Prepare Homebrew
