@@ -1,6 +1,6 @@
 cask "tmog" do
-  version "0.1.4,20260916001402"
-  sha256 "b89aa98f75303dd5a21cdf1be491ccfc956c650051d1c2bb3e6882eaf6e08d57"
+  version "1.0.0,20260923234339"
+  sha256 "78c482e598e16fa5b479e05a9609a3a4c1f78dfce960468bea77f0fb98189895"
 
   url "https://www.tmog.org/downloads/TMOG-Task-Manager-#{version.csv.first}-#{version.csv.second}-macOS-universal.dmg"
   name "Task Manager TMOG"
