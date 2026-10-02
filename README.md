@@ -44,6 +44,7 @@ tap "calvindotsg/tap", trusted: true
 | [mac-upkeep](https://github.com/calvindotsg/mac-upkeep) | Automated macOS maintenance CLI (TOML-driven, weekly scheduler) | `brew install calvindotsg/tap/mac-upkeep` |
 | [opensrc](https://github.com/vercel-labs/opensrc) (third-party) | Fetch source code for packages to give coding agents deeper context | `brew install calvindotsg/tap/opensrc` |
 | [pymarkdownlnt](https://github.com/jackdewinter/pymarkdown) (third-party) | GitHub Flavored Markdown compliant Markdown linter | `brew install calvindotsg/tap/pymarkdownlnt` |
+| [fitdecode](https://github.com/polyvertex/fitdecode) (third-party) | Decode Garmin FIT files to JSON or text (`fitjson`, `fittxt`) | `brew install calvindotsg/tap/fitdecode` |
 
 ## Casks
 
