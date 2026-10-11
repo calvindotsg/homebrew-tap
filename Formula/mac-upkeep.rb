@@ -3,8 +3,8 @@ class MacUpkeep < Formula
 
   desc "Automated macOS maintenance CLI (TOML-driven, weekly scheduler)"
   homepage "https://github.com/calvindotsg/mac-upkeep"
-  url "https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/v4.1.0.tar.gz"
-  sha256 "570e2b5e0fafe218d23705c875d93f3ba0cc2d384be6493fe2e054667aae8d1e"
+  url "https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/v4.2.0.tar.gz"
+  sha256 "4235ac3d545123e87bf7d3e9ff0b4d9a0a0c65fc395cf9d0ac2f05ac4662ffb2"
   license "MIT"
 
   depends_on "python@3.13"
@@ -42,8 +42,8 @@ class MacUpkeep < Formula
   end
 
   resource "typer" do
-    url "https://files.pythonhosted.org/packages/16/f7/57713ba479fd405eb76de31404b2c744c289e336b2d999511ebf51e496f7/typer-0.27.2.tar.gz"
-    sha256 "269b7eb9d3c202ca84b4bc9618cb04ebb43d3d4d1e567e4c768607232c05f945"
+    url "https://files.pythonhosted.org/packages/03/51/d33db42cc72ffd8c30777547b42d01f0cbf9d95a770457698d0174b3ed71/typer-0.27.3.tar.gz"
+    sha256 "d0396f770a560ab1b0a8504e13b5f254b728cedb05c61cf0359e944e50ce8901"
   end
 
   def install
