@@ -3,8 +3,8 @@ class MacUpkeep < Formula
 
   desc "Automated macOS maintenance CLI (TOML-driven, weekly scheduler)"
   homepage "https://github.com/calvindotsg/mac-upkeep"
-  url "https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/v4.2.0.tar.gz"
-  sha256 "4235ac3d545123e87bf7d3e9ff0b4d9a0a0c65fc395cf9d0ac2f05ac4662ffb2"
+  url "https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/v4.2.1.tar.gz"
+  sha256 "b572be1e10c8c843fbce2ed77db6d26fa4879961ad757572783a55ca8462fce6"
   license "MIT"
 
   depends_on "python@3.13"
