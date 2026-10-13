@@ -47,7 +47,7 @@ jobs:
       fail-fast: false
       matrix:
         # ubuntu covers the Linux-compatible CLIs (opensrc);
-        # macos covers the macOS-only formulae (cc-menubar, mac-upkeep). test-bot
+        # macos covers the macOS-only formula (mac-upkeep). test-bot
         # only builds the formulae changed in the PR, so cost stays proportional.
         os: [ubuntu-latest, macos-latest]
         include:

@@ -32,8 +32,8 @@ jobs:
   # (no `cask:` input), so the jobs above can never bump a cask. Runs on macOS because
   # Homebrew has no cask support on Linux at all — not a livecheck-strategy limitation.
   #
-  # Only casks WITHOUT `auto_updates true` belong here. firefoo and littlebird self-update,
-  # so Homebrew deliberately doesn't own their upgrades. The list is empty since tmog was
+  # Only casks WITHOUT `auto_updates true` belong here. firefoo self-updates, so Homebrew
+  # deliberately doesn't own its upgrades (littlebird did too, until 2026-10-13). The list is empty since tmog was
   # removed on 2026-10-13.
   #
   # `brew test-bot` has no cask module at all — its library holds only formulae*.rb and
