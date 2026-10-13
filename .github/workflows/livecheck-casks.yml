@@ -1,7 +1,10 @@
 name: livecheck casks
 on:
-  schedule:
-    - cron: "0 7 * * *"
+  # No schedule while the list below is empty (2026-10-13: tmog, the only cask
+  # Homebrew had to bump, was removed). A daily macOS job with nothing to check
+  # still bills macOS minutes, at ten times the Linux rate: its 12 runs of 1 to
+  # 12 Oct 2026 billed 14. Restore `schedule: - cron: "0 7 * * *"` in the same
+  # change that adds the next non-auto-updating cask.
   workflow_dispatch:
 
 # Deliberately a separate workflow from livecheck.yml rather than another job in
@@ -30,7 +33,8 @@ jobs:
   # Homebrew has no cask support on Linux at all — not a livecheck-strategy limitation.
   #
   # Only casks WITHOUT `auto_updates true` belong here. firefoo and littlebird self-update,
-  # so Homebrew deliberately doesn't own their upgrades; tmog cannot, so it does.
+  # so Homebrew deliberately doesn't own their upgrades. The list is empty since tmog was
+  # removed on 2026-10-13.
   #
   # `brew test-bot` has no cask module at all — its library holds only formulae*.rb and
   # tap_syntax.rb — so a Casks/-only PR is style-checked and nothing more: no download, no
@@ -79,7 +83,7 @@ jobs:
           base=$(git -C "$tap_dir" rev-parse HEAD)
           : > "${RUNNER_TEMP}/bumped.tsv"
 
-          for cask in tmog; do
+          for cask in ; do
             latest=$(brew livecheck --cask --newer-only --json "calvindotsg/tap/${cask}" \
                        | jq -r '.[0].version.latest // empty')
             if [ -z "${latest}" ]; then
@@ -119,7 +123,6 @@ jobs:
           # signing identity cannot silently skip verification.
           expected_team_for() {
             case "$1" in
-              tmog) echo "25BPDA4NQ3" ;;  # Developer ID Application: David Plummer
               *)    echo "" ;;
             esac
           }

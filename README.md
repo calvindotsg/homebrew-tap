@@ -52,7 +52,6 @@ tap "calvindotsg/tap", trusted: true
 |------|-------------|---------|
 | [Firefoo](https://www.firefoo.com/) | GUI client for Firebase Firestore | `brew install --cask calvindotsg/tap/firefoo` |
 | [Littlebird](https://littlebird.ai/) | Context-aware AI assistant that reads on-screen text across apps | `brew install --cask calvindotsg/tap/littlebird` |
-| [TMOG](https://www.tmog.org/) | Native system monitor for CPU, memory, storage, network, and thermals | `brew install --cask calvindotsg/tap/tmog` |
 
 ## Deprecated
 
