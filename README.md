@@ -51,10 +51,10 @@ tap "calvindotsg/tap", trusted: true
 | Cask | Description | Install |
 |------|-------------|---------|
 | [Firefoo](https://www.firefoo.com/) | GUI client for Firebase Firestore | `brew install --cask calvindotsg/tap/firefoo` |
-| [Littlebird](https://littlebird.ai/) | Context-aware AI assistant that reads on-screen text across apps | `brew install --cask calvindotsg/tap/littlebird` |
 
-## Deprecated
+## Removed
 
 | Package | Status |
 |---------|--------|
-| [cc-menubar](https://github.com/calvindotsg/cc-menubar) | Deprecated 2026-08-16 — repository archived. Homebrew disables it automatically on **2027-08-16**; it is removed from this tap after that. Still installable from [PyPI](https://pypi.org/project/cc-menubar/) (`uv tool install cc-menubar`). |
+| [cc-menubar](https://github.com/calvindotsg/cc-menubar) | Deprecated 2026-08-16 (repository archived) and removed from this tap on 2026-10-13, ahead of the planned 2027-08-16, because Calvin no longer uses it. Still installable from [PyPI](https://pypi.org/project/cc-menubar/) (`uv tool install cc-menubar`). |
+| Littlebird (cask) | Removed 2026-10-13: Calvin no longer uses it. |
