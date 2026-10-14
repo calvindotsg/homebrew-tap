@@ -1,8 +1,8 @@
 class GrokBotCli < Formula
   desc "Manage Grok Bot agents, groups, and messages from the terminal"
   homepage "https://github.com/ScriptedAlchemy/grok-bot-cli"
-  url "https://registry.npmjs.org/grok-bot-cli/-/grok-bot-cli-0.4.0.tgz"
-  sha256 "fb08c14fb7dd83e8510540c5e82ba404b1581c21d651e2832551c361ef80c51b"
+  url "https://registry.npmjs.org/grok-bot-cli/-/grok-bot-cli-0.12.4.tgz"
+  sha256 "80a9465500fd88796871d7f69781ec4a4af093cca1562b0aee0bb5cb062d6e55"
   license "MIT"
 
   # Livecheck uses the Npm strategy, auto-detected from the registry URL above.
