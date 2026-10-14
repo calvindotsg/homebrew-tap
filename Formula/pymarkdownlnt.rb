@@ -3,8 +3,8 @@ class Pymarkdownlnt < Formula
 
   desc "GitHub Flavored Markdown compliant Markdown linter"
   homepage "https://github.com/jackdewinter/pymarkdown"
-  url "https://files.pythonhosted.org/packages/60/ea/a784da505745c5eb19b7b6be62a0cee4c25c42ba72e010413a7ebaa40ca7/pymarkdownlnt-0.9.40.tar.gz"
-  sha256 "9e6b1137b9f4b496da10f838bc30f66e4c182a0bf53d93d3afce65a541ded091"
+  url "https://files.pythonhosted.org/packages/fc/ba/196874ceaa6c603e39578e92fa1dc8356dec3205d2437c7b1f7bcf606825/pymarkdownlnt-0.9.41.tar.gz"
+  sha256 "d6a477498feacf004ba1eea1847e70cbb083c7175ee62bde7a8f11bf2ce943cb"
   license "MIT"
 
   # No `livecheck` block: the Pypi strategy auto-matches files.pythonhosted.org URLs
@@ -66,13 +66,13 @@ class Pymarkdownlnt < Formula
   end
 
   resource "tomli" do
-    url "https://files.pythonhosted.org/packages/22/de/48c59722572767841493b26183a0d1cc411d54fd759c5607c4590b6563a6/tomli-2.4.1.tar.gz"
-    sha256 "7c7e1a961a0b2f2472c1ac5b69affa0ae1132c39adcb67aba98568702b9cc23f"
+    url "https://files.pythonhosted.org/packages/b0/78/9ad63712633ed3ab5cc1a648d863d7e7da371e9425e209555a0fe711b695/tomli-2.5.0.tar.gz"
+    sha256 "264507556cd8b8c8e7c6ee037cdf443a463f03f4c958e57195e3d369711b8ff6"
   end
 
   resource "toolz" do
-    url "https://files.pythonhosted.org/packages/11/d6/114b492226588d6ff54579d95847662fc69196bdeec318eb45393b24c192/toolz-1.1.0.tar.gz"
-    sha256 "27a5c770d068c110d9ed9323f24f1543e83b2f300a687b7891c1a6d56b697b5b"
+    url "https://files.pythonhosted.org/packages/31/6f/ae20c212a07aa2d156c787383d8088a5e045ee39628661edb190c97e1659/toolz-1.2.0.tar.gz"
+    sha256 "9667a038e9d6ecba37995e26cb2f59ec6420b6ad8dd9677de59db9b956b08490"
   end
 
   resource "typing-extensions" do
@@ -81,8 +81,8 @@ class Pymarkdownlnt < Formula
   end
 
   resource "wcwidth" do
-    url "https://files.pythonhosted.org/packages/36/57/ed58088fafdf4c55a0ad6bde846502567645424d7ebf325230b9237f4085/wcwidth-0.8.3.tar.gz"
-    sha256 "d128512515fbf4612e0ff21fd6380399210318b7b54a9af59dff8454cf9730eb"
+    url "https://files.pythonhosted.org/packages/f0/b4/7830542634bb2d3e62aa3b586a72d5b3b6c91c3168929e7000ef3fed041d/wcwidth-0.9.2.tar.gz"
+    sha256 "ae0ef90b90f6af38b54f1fe6d58662ec33b3cb4b8391958a62416d654231727b"
   end
 
   def install
