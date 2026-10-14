@@ -55,8 +55,7 @@ jobs:
 
           # Every npm-sourced formula goes through the same gate. Pairs are
           # "<formula> <npm package>"; keep this list in step with CLAUDE.md.
-          npm_lanes="cloudflare-cf cf
-          grok-bot-cli grok-bot-cli"
+          npm_lanes="cloudflare-cf cf"
 
           while read -r formula pkg; do
             [ -n "$formula" ] || continue
