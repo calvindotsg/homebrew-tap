@@ -34,7 +34,7 @@ jobs:
     # the token powerless regardless. The action authenticates with the PAT.
     permissions: {}
     steps:
-      - uses: Homebrew/actions/setup-homebrew@e99025eb970cfa124b8284a35463d87426917478 # 2026.09.28.1
+      - uses: Homebrew/actions/setup-homebrew@eb02c69dbabdb66ff183c614f4ce7ab3c077592c # 2026.10.12.1
 
       # `brew bump` applies a per-strategy release cooldown; `brew bump-formula-pr`
       # does not, and the action drives livecheck straight into it — so npm publish
@@ -128,7 +128,7 @@ jobs:
     env:
       FORMULA: pymarkdownlnt
     steps:
-      - uses: Homebrew/actions/setup-homebrew@e99025eb970cfa124b8284a35463d87426917478 # 2026.09.28.1
+      - uses: Homebrew/actions/setup-homebrew@eb02c69dbabdb66ff183c614f4ce7ab3c077592c # 2026.10.12.1
 
       - name: Prepare Homebrew
         shell: bash
@@ -181,7 +181,7 @@ jobs:
           mkdir -p /tmp/out
           cp "${tap_dir}/Formula/${FORMULA}.rb" /tmp/out/formula.rb
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.lc.outputs.version != ''
         with:
           name: rewritten-pymarkdownlnt
@@ -205,7 +205,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rewritten-pymarkdownlnt
           path: /tmp/in
@@ -268,7 +268,7 @@ jobs:
     env:
       FORMULA: fitdecode
     steps:
-      - uses: Homebrew/actions/setup-homebrew@e99025eb970cfa124b8284a35463d87426917478 # 2026.09.28.1
+      - uses: Homebrew/actions/setup-homebrew@eb02c69dbabdb66ff183c614f4ce7ab3c077592c # 2026.10.12.1
 
       - name: Prepare Homebrew
         shell: bash
@@ -321,7 +321,7 @@ jobs:
           mkdir -p /tmp/out
           cp "${tap_dir}/Formula/${FORMULA}.rb" /tmp/out/formula.rb
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.lc.outputs.version != ''
         with:
           name: rewritten-fitdecode
@@ -345,7 +345,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rewritten-fitdecode
           path: /tmp/in
