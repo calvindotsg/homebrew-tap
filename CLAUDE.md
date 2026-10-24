@@ -68,6 +68,8 @@ See `## Reusable Patterns` (added in the docs-reusable-patterns PR) for the "sch
 
 `.github/workflows/tests.yml` runs `brew test-bot` on every PR (and pushes to `main`): `--only-tap-syntax` audits/styles the whole tap, `--only-formulae` builds and tests the formulae *changed* in the PR. Matrix is ubuntu (Linux-compatible CLIs) + macOS (the `:macos`-gated formulae). It only builds changed formulae, so cost scales with the diff.
 
+**Gate:** `./gate` runs every merge-relevant check (`GATE_RUNNER=linux|macos` for the CI legs; the test-bot rows run only in CI) and ends `GATE <passed>/<total> failed=<n> notrun=<n> needs-calvin=<reason|none>`.
+
 The same workflow carries an `arch-consistency` job. `brew bump-formula-pr` rewrites only a formula's top-level stable `url`/`sha256`, so an arch override nested in `on_intel`/`on_arm` never moves with the automated bump — and test-bot builds for the runner's own architecture only, so nothing else notices. The job fails the PR when one formula references more than one upstream release tag; `Formula/opensrc.rb` is the only formula in the tap with an arch override, so it is the one this guards.
 
 `.github/workflows/automerge.yml` squash-merges and **deletes the branch** of any same-repo `bump-*` PR once test-bot passes. Branch deletion is the actual fix for the recurring livecheck failures: `brew bump-formula-pr` reuses `bump-<formula>-<version>` branch names, so an unmerged PR's stale branch made every later run fail to push (non-fast-forward) and crash on the action's `odie` bug. With auto-merge draining the queue, the branch never lingers.

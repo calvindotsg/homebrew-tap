@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# The merge gate: every merge-relevant check in this repo, one command (merge-on-green plan § 3.1, phase 3).
+#
+#   ./gate              run every check this machine can (local: fast and advisory)
+#   GATE_RUNNER=linux   what the hosted Linux job runs (tests.yml: arch-consistency, test-bot (ubuntu-latest))
+#   GATE_RUNNER=macos   what the hosted macOS job runs: test-bot (macos-latest), the leg that builds the
+#                       macOS-only formula (mac-upkeep) and audits the cask on its own platform
+#
+# Last line: GATE <passed>/<total> failed=<n> notrun=<n> needs-calvin=<reason|none>
+# Exit 0 only with 0 failed, 0 not run, and nothing waiting on Calvin in CI.
+#
+# A check that belongs to the other platform is out of this run's total, never "not run". A check whose
+# tool is missing where it should run is "not run", and that fails the gate.
+#
+# CI only (out of a local run's total): the brew test-bot rows. They work on the tapped tap, which in CI
+# is this checkout (setup-homebrew links it in); on this Mac it is the live tap, a different directory, and
+# test-bot's cleanup and setup steps change Homebrew's state. So they run only under GATE_RUNNER, and only
+# when `brew --repository calvindotsg/tap` is this checkout; otherwise they are "not run". The quick local
+# approximation is `brew style Formula/*.rb Casks/*.rb` by hand (CLAUDE.md, Adding a Cask).
+#
+# Out, not merge-relevant (no pull_request trigger):
+#   - livecheck.yml (daily cron) and livecheck-casks.yml (dispatch only): scheduled bump lanes, need the tap PAT
+#   - update-formula.yml and update-cask.yml: dispatch-only bump lanes, need the tap PAT
+#   - automerge.yml: post-test workflow_run that merges bot bump-* PRs
+#   - tests.yml on push to main: the post-merge run of the same checks
+# macOS bash 3.2: no mapfile, no associative arrays.
+
+set -u
+cd "$(dirname "$0")" || exit 2
+
+RUNNER="${GATE_RUNNER:-local}"
+case "$RUNNER" in
+  linux|macos|local) ;;
+  *) echo "gate: GATE_RUNNER must be linux, macos or unset (got $RUNNER)" >&2; exit 2 ;;
+esac
+# The Mac runs the rules with the system Python 3.9; elsewhere python3 is what there is.
+PY=python3
+[ -x /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && PY=/usr/bin/python3
+
+LOG="$(mktemp -d "${TMPDIR:-/tmp}/gate.XXXXXX")" || exit 2
+trap 'rm -rf "$LOG"' EXIT
+passed=0 failed=0 notrun=0 n=0
+needs="none"
+
+# applies <platforms>: true when this run includes a check for those platforms ("linux macos", "macos", ...).
+applies() {
+  case "$RUNNER" in
+    local) [ "$(uname -s)" = Darwin ] && return 0   # a Mac runs all; a Linux machine runs the Linux checks
+           case " $1 " in *" linux "*) return 0 ;; *) return 1 ;; esac ;;
+    *) case " $1 " in *" $RUNNER "*) return 0 ;; *) return 1 ;; esac ;;
+  esac
+}
+
+# check <name> <platforms> <tool> <command...>: run one check and tally it.
+check() {
+  local name="$1" where="$2" tool="$3"; shift 3
+  applies "$where" || return 0
+  n=$((n + 1))
+  if [ -n "$tool" ] && ! command -v "$tool" > /dev/null 2>&1; then
+    notrun=$((notrun + 1)); echo "notrun $name ($tool not found)"; return 0
+  fi
+  local t0=$SECONDS
+  if "$@" > "$LOG/$n" 2>&1; then
+    passed=$((passed + 1)); echo "ok     $name ($((SECONDS - t0)) s)"
+  else
+    failed=$((failed + 1)); echo "FAIL   $name ($((SECONDS - t0)) s)"; tail -20 "$LOG/$n" | sed 's/^/       /'
+  fi
+}
+
+# No row here is a test suite with a summary line: every check's contract is its exit status (a linter, an
+# audit, a build). test-bot prints no final summary; it exits non-zero when any step FAILED. So there is no
+# `suite` wrapper in this gate; the vacuous-pass guards are the tapped-checkout check below and the counts.
+
+# tapped: true when Homebrew's calvindotsg/tap is this checkout (CI), never the live tap of a Mac.
+tapped() { local p; p="$(brew --repository calvindotsg/tap 2>/dev/null)" && [ -n "$p" ] && [ "$p" -ef "$PWD" ]; }
+# ci_check <name> <platforms> <command...>: a brew test-bot row. Out of a local run; "not run" under
+# GATE_RUNNER when the tapped tap is not this checkout (test-bot would test another directory).
+ci_check() {
+  local name="$1" where="$2"; shift 2
+  applies "$where" || return 0
+  [ "$RUNNER" = local ] && return 0
+  if command -v brew > /dev/null 2>&1 && ! tapped; then
+    n=$((n + 1)); notrun=$((notrun + 1))
+    echo "notrun $name (calvindotsg/tap is not this checkout: CI only)"; return 0
+  fi
+  check "$name" "$where" brew "$@"
+}
+
+# tests.yml arch-consistency, verbatim: one formula must not reference two upstream release tags. Its contract
+# is its exit status. Plus one guard CI lacks: a run that scans no formula fails rather than passing empty.
+arch_consistency() (
+  set -euo pipefail
+  rc=0 seen=0
+  for f in Formula/*.rb; do
+    [ -f "$f" ] || continue
+    seen=$((seen + 1))
+    tags=$(grep -oE 'releases/download/[^/"]+/' "$f" | sed 's|releases/download/||; s|/$||' | sort -u || true)
+    count=$(printf '%s\n' "$tags" | grep -c . || true)
+    if [ "$count" -gt 1 ]; then
+      joined=$(printf '%s\n' "$tags" | tr '\n' ' ')
+      echo "::error file=$f::mixed upstream release tags in one formula: $joined"
+      rc=1
+    fi
+  done
+  [ "$seen" -gt 0 ] || { echo "no Formula/*.rb scanned"; exit 1; }
+  echo "$seen formulae scanned"
+  exit "$rc"
+)
+# test-bot (ubuntu-latest / macos-latest) steps, the same commands. --tap names what CI's GITHUB_REPOSITORY
+# resolves to. --only-formulae is a pull_request step in CI (skipped on push); here it is skipped on push too.
+export HOMEBREW_NO_AUTO_UPDATE=1
+testbot_setup() { brew test-bot --tap=calvindotsg/tap --only-cleanup-before && brew test-bot --tap=calvindotsg/tap --only-setup; }
+testbot_syntax() { brew test-bot --tap=calvindotsg/tap --only-tap-syntax; }
+testbot_formulae() { brew test-bot --tap=calvindotsg/tap --only-formulae; }
+rules_pinned() { [ "$("$PY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' scripts/gate/gate-rules.py)" = "$(cut -d' ' -f1 scripts/gate/gate-rules.sha256)" ]; }
+
+check    "arch-consistency"                 "linux"       ""  arch_consistency
+ci_check "brew test-bot setup"              "linux macos"     testbot_setup
+ci_check "brew test-bot --only-tap-syntax"  "linux macos"     testbot_syntax
+if [ "${GITHUB_EVENT_NAME:-}" = push ]; then
+  applies "linux macos" && [ "$RUNNER" != local ] && echo "out    brew test-bot --only-formulae (push run: CI skips it too)"
+else
+  ci_check "brew test-bot --only-formulae"  "linux macos"     testbot_formulae
+fi
+[ "$RUNNER" = local ] && echo "out    brew test-bot rows (CI only: they test the tapped checkout; see the header)"
+check    "gate-rules.py matches its pin"    "linux"       ""  rules_pinned
+
+# The needs-Calvin rules (plan § 3.4). Run only when the vendored copy matches its pin.
+if applies linux; then
+  n=$((n + 1))
+  if ! rules_pinned; then
+    notrun=$((notrun + 1)); echo "notrun needs-calvin rules (scripts/gate/gate-rules.py differs from its pin)"
+  else
+    "$PY" scripts/gate/gate-rules.py > "$LOG/rules" 2>&1; rc=$?
+    line="$(grep '^needs-calvin=' "$LOG/rules" | tail -1)"
+    case "$rc" in
+      0) passed=$((passed + 1)); echo "ok     needs-calvin rules ($line)" ;;
+      1) passed=$((passed + 1)); echo "ok     needs-calvin rules, waiting on Calvin ($line)" ;;
+      *) failed=$((failed + 1)); echo "FAIL   needs-calvin rules (cannot decide)" ;;
+    esac
+    sed 's/^/       /' "$LOG/rules"
+    reason="${line#needs-calvin=}"; reason="${reason% review=*}"
+    [ -n "$line" ] && [ "$reason" != none ] && needs="$reason"
+    [ "$rc" = 1 ] && rules_block=1
+  fi
+fi
+
+echo "GATE $passed/$n failed=$failed notrun=$notrun needs-calvin=$needs"
+[ "$failed" = 0 ] && [ "$notrun" = 0 ] && [ "${rules_block:-0}" = 0 ]
