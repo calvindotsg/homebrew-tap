@@ -18,7 +18,16 @@ on:
         required: true
         type: choice
         options: [python, node]
+      dry_run:
+        description: "Rewrite and verify only, open no PR. Set false to open the bump PR."
+        type: boolean
+        default: true
 
+# A hand start writes nothing unless it passes `-f dry_run=false` (Calvin, 13 Nov 2026). The
+# guards use `toJSON(inputs.dry_run) == 'false'`: `inputs.dry_run == false` is also true when the
+# input is missing, because null and '' compare equal to false.
+# A repository_dispatch from a source repo carries no inputs and is never a dry run.
+#
 # Nothing here uses the ambient GITHUB_TOKEN. The half that runs upstream code
 # holds no credential at all, and the half that publishes authenticates with the
 # tap PAT. Note that `permissions:` governs `github.token` only — it must also be
@@ -343,7 +352,15 @@ jobs:
           done < <(git diff -- "Formula/$FORMULA.rb")
           exit "$rc"
 
+      - name: Dry run, show the skipped change
+        if: github.event_name == 'workflow_dispatch' && toJSON(inputs.dry_run) != 'false'
+        shell: bash
+        run: |
+          git diff -- "Formula/$FORMULA.rb"
+          echo "::notice title=Dry run::The verified diff above was not pushed and no PR was opened. Start with -f dry_run=false to open it."
+
       - name: Open the bump PR
+        if: github.event_name != 'workflow_dispatch' || toJSON(inputs.dry_run) == 'false'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}

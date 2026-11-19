@@ -12,7 +12,15 @@ on:
       version:
         description: "Version (e.g., 1.5.12) — leave empty to auto-detect via livecheck"
         required: false
+      dry_run:
+        description: "Rewrite only, open no PR. Set false to open the bump PR."
+        type: boolean
+        default: true
 
+# A hand start writes nothing unless it passes `-f dry_run=false` (Calvin, 13 Nov 2026). The
+# guards use `toJSON(inputs.dry_run) == 'false'`: `inputs.dry_run == false` is also true when the
+# input is missing, because null and '' compare equal to false.
+#
 # Nothing here uses the ambient GITHUB_TOKEN; the push and the PR are made with
 # the tap PAT. Set per job as well, since `permissions:` governs `github.token`
 # and some Homebrew actions copy it into the job environment.
@@ -143,8 +151,15 @@ jobs:
               f.write(content)
           PYEOF
 
+      - name: Dry run, show the skipped change
+        if: steps.version.outputs.skip != 'true' && github.event_name == 'workflow_dispatch' && toJSON(inputs.dry_run) != 'false'
+        shell: bash
+        run: |
+          git diff -- "Casks/$CASK.rb"
+          echo "::notice title=Dry run::The diff above was not pushed and no PR was opened. Start with -f dry_run=false to open it."
+
       - name: Open the bump PR
-        if: steps.version.outputs.skip != 'true'
+        if: steps.version.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || toJSON(inputs.dry_run) == 'false')
         shell: bash
         env:
           VER: ${{ steps.version.outputs.version }}

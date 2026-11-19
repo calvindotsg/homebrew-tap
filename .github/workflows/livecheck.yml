@@ -2,7 +2,15 @@ name: livecheck
 on:
   schedule:
     - cron: "0 7 * * *"
+  # A hand start writes nothing unless it passes `-f dry_run=false` (Calvin, 13 Nov 2026). The
+  # guards use `toJSON(inputs.dry_run) == 'false'`: `inputs.dry_run == false` is also true when the
+  # input is missing, because null and '' compare equal to false.
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Check only, open no PR. Set false to bump for real."
+        type: boolean
+        default: true
 # Every write here is made with the tap PAT, so the ambient GITHUB_TOKEN needs no
 # scopes at all. This must ALSO be repeated per job: setup-homebrew copies
 # `github.token` into HOMEBREW_GITHUB_API_TOKEN for the whole job, and `HOMEBREW_*`
@@ -82,12 +90,28 @@ jobs:
             echo "FORMULAE_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: dawidd6/action-homebrew-bump-formula@b12d2bc99c46444125e606142f28200ec71a1214 # v10
+      - if: github.event_name != 'workflow_dispatch' || toJSON(inputs.dry_run) == 'false'
+        uses: dawidd6/action-homebrew-bump-formula@b12d2bc99c46444125e606142f28200ec71a1214 # v10
         with:
           token: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
           no_fork: true
           formula: ${{ steps.lane.outputs.formulae }}
           livecheck: true
+
+      # A dry run: what the action would have bumped, and nothing pushed.
+      - name: Dry run, print livecheck
+        if: github.event_name == 'workflow_dispatch' && toJSON(inputs.dry_run) != 'false'
+        shell: bash
+        env:
+          FORMULAE: ${{ steps.lane.outputs.formulae }}
+        run: |
+          set -euo pipefail
+          brew tap calvindotsg/tap
+          brew trust --tap calvindotsg/tap
+          # Word splitting on the newline-separated list is intended.
+          # shellcheck disable=SC2086
+          brew livecheck --formula $FORMULAE
+          echo "::notice title=Dry run::No bump PR opened. Start with -f dry_run=false to bump."
 
   # pymarkdownlnt is sourced from a PyPI sdist, so `brew bump-formula-pr` calls
   # `PyPI.update_python_resources!` → `pip install --dry-run`, which builds each
@@ -189,12 +213,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Dry run, report the skipped PR
+        if: steps.lc.outputs.version != '' && github.event_name == 'workflow_dispatch' && toJSON(inputs.dry_run) != 'false'
+        shell: bash
+        env:
+          VERSION: ${{ steps.lc.outputs.version }}
+        run: echo "::notice title=Dry run::${FORMULA} ${VERSION} rewritten; no bump PR opened. Start with -f dry_run=false to open it."
+
   # Publishes what the job above produced, on a fresh runner that has never run
   # upstream code. No brew here at all: it checks the repo out, drops the one file
   # into a path this job chooses, and opens the PR.
   bump-python-pr:
     needs: bump-python
-    if: needs.bump-python.outputs.version != ''
+    if: needs.bump-python.outputs.version != '' && (github.event_name != 'workflow_dispatch' || toJSON(inputs.dry_run) == 'false')
     runs-on: ubuntu-latest
     permissions: {}
     env:
@@ -329,12 +360,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Dry run, report the skipped PR
+        if: steps.lc.outputs.version != '' && github.event_name == 'workflow_dispatch' && toJSON(inputs.dry_run) != 'false'
+        shell: bash
+        env:
+          VERSION: ${{ steps.lc.outputs.version }}
+        run: echo "::notice title=Dry run::${FORMULA} ${VERSION} rewritten; no bump PR opened. Start with -f dry_run=false to open it."
+
   # Publishes what the job above produced, on a fresh runner that has never run
   # upstream code. No brew here at all: it checks the repo out, drops the one file
   # into a path this job chooses, and opens the PR.
   bump-python-fitdecode-pr:
     needs: bump-python-fitdecode
-    if: needs.bump-python-fitdecode.outputs.version != ''
+    if: needs.bump-python-fitdecode.outputs.version != '' && (github.event_name != 'workflow_dispatch' || toJSON(inputs.dry_run) == 'false')
     runs-on: ubuntu-latest
     permissions: {}
     env:
