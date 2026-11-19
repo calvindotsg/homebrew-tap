@@ -32,7 +32,9 @@ permissions: {}
 # Its own group, not livecheck's: cask branches (`bump-<cask>-…`) never collide
 # with formula branches, so there is nothing to serialise between the two lanes.
 concurrency:
-  group: livecheck-casks
+  # A dry run waits in a group of its own: a group holds one waiting run, and a newly queued run
+  # cancels it, so a shared group would let a dry run cancel a waiting real one.
+  group: livecheck-casks${{ (github.event_name == 'workflow_dispatch' && toJSON(inputs.dry_run) != 'false') && '-dry-run' || '' }}
   cancel-in-progress: false
 
 jobs:
