@@ -45,7 +45,7 @@ Automated via `update-formula.yml`. Triggered automatically by source repos on r
 
 The two jobs exist for one reason: `prepare` runs `pip install "$URL"`, which executes the sdist's build backend, and a step boundary is not a credential boundary. Separate jobs get separate machines, and the only thing that crosses between them is a single file under a fixed name — the destination path is chosen by `open-pr`, never by the artifact.
 
-**Manual fallback:** Actions tab → "Update formula" → Run workflow → enter formula name, version tag, tarball URL, type (python/node).
+**Manual fallback:** Actions tab → "Update formula" → Run workflow → enter formula name, version tag, tarball URL, type (python/node), and untick `dry_run` (ticked by default, it opens no PR).
 
 ### Third-Party Formulas
 
@@ -60,6 +60,7 @@ The scope is deliberately limited to third-party formulas by an explicit list �
       -f version=vX.Y.Z \
       -f url='https://github.com/calvindotsg/mac-upkeep/archive/refs/tags/vX.Y.Z.tar.gz' \
       -f type=python \
+      -f dry_run=false \
       -R calvindotsg/homebrew-tap
 
 See `## Reusable Patterns` (added in the docs-reusable-patterns PR) for the "scheduled livecheck cron" and "explicit third-party formula list" templates.
@@ -89,9 +90,9 @@ It resolves the PR from `workflow_run.head_sha` (matched against `headRefOid`) a
 
 Manual trigger via Actions UI or CLI:
 
-    gh workflow run update-cask.yml -f cask=firefoo -f version=1.6.0
+    gh workflow run update-cask.yml -f cask=firefoo -f version=1.6.0 -f dry_run=false
 
-Leave `version` empty to auto-detect via `brew livecheck`. The workflow computes arch-specific SHA256s automatically, then opens a `bump-firefoo-<version>` PR — it no longer pushes to `main`.
+Leave `version` empty to auto-detect via `brew livecheck`. Without `-f dry_run=false` the run only prints the diff and opens no PR. The workflow computes arch-specific SHA256s automatically, then opens a `bump-firefoo-<version>` PR — it no longer pushes to `main`.
 
 Note: `update-cask.yml` now **fails closed for any cask other than firefoo**, because its SHA step hardcodes Firefoo's download-URL pattern and would otherwise write the checksum of a 404 body into some other cask. A self-updating cask (`auto_updates true`) deliberately bypasses it, and `brew livecheck --cask` surfaces new versions for a human to act on; `littlebird` did, until its removal on 2026-10-13.
 
@@ -163,7 +164,7 @@ Templates in this tap worth copying/adapting into other Homebrew taps or formula
 - **`shell: bash` cuts both ways.** The Actions default `run:` shell is `bash -e` with **no** `pipefail`, so `X=$(curl -sL "$URL" | shasum -a 256 | cut -d' ' -f1)` can never fail and a 404 body gets hashed and committed. Declaring `shell: bash` gives `bash --noprofile --norc -eo pipefail` — but then a `grep` that legitimately matches nothing kills the step with no output. Absorb those at the call site (`... | sort -u || true`) and test any such block under the runner's real flags: `bash --noprofile --norc -eo pipefail script.sh`. A plain `#!/bin/bash` test passes and proves nothing.
 - **`brew bump-formula-pr --write-only` takes no git action at all**, and `--commit` is what makes it commit (`return if args.write_only? && !args.commit?`). With `--commit`, `Homebrew::Bump.create_pr` skips its own `git checkout -b` *and* returns before pushing, so the commit lands on the tap clone's current branch at `$(brew --repo <tap>)` — not in `$GITHUB_WORKSPACE` and not on a `bump-*` branch. It also raises `UsageError` without `--version`. If a workflow only needs the rewritten file, pass `--write-only` alone and let a separate job commit it.
 - **`persist-credentials: false` breaks a bare `git push`.** `actions/checkout`'s default persists a token for the steps that follow — in `.git/config`'s `http.extraheader` up to v5, and from v6 in a separate file under `$RUNNER_TEMP` wired in with an `includeIf` — and a step that just runs `git push` depends entirely on it. Setting the flag without re-authenticating the push in the same change is half a fix that fails at the last step.
-- **`brew test-bot` does not cover the credential-bearing workflows.** `tests.yml` is the only CI a Dependabot action-pin bump gets, and it exercises `checkout`, `cache`, and — only when the PR changed a formula — `upload-artifact`. Nothing in `livecheck.yml`, `livecheck-casks.yml`, `update-formula.yml` or `update-cask.yml` ever runs on a pull request, so a green pin bump says nothing about the pins that actually matter. Validate those lanes with a dispatch on the bump branch (`gh workflow run <workflow> --ref <branch>`) before merging. `update-formula.yml` re-dispatched at a formula's *current* version and URL is an idempotent end-to-end smoke test of the whole two-job hand-off: both publishing jobs bail with "No changes … nothing to open" when the rewritten file matches what is already committed.
+- **`brew test-bot` does not cover the credential-bearing workflows.** `tests.yml` is the only CI a Dependabot action-pin bump gets, and it exercises `checkout`, `cache`, and — only when the PR changed a formula — `upload-artifact`. Nothing in `livecheck.yml`, `livecheck-casks.yml`, `update-formula.yml` or `update-cask.yml` ever runs on a pull request, so a green pin bump says nothing about the pins that actually matter. Validate those lanes with a dispatch on the bump branch (`gh workflow run <workflow> --ref <branch>`) before merging. A hand start is a dry run unless it passes `-f dry_run=false` (since 2026-11): it skips the push-and-PR steps, so it does not run every pin. In `livecheck.yml` it skips the `dawidd6/action-homebrew-bump-formula` step and both Python PR jobs, with their `checkout` and `download-artifact` pins; check a bump of those with a real run. `update-formula.yml` re-dispatched at a formula's *current* version and URL is an idempotent end-to-end smoke test of the whole two-job hand-off: with `-f dry_run=false`, both publishing jobs bail with "No changes … nothing to open" when the rewritten file matches what is already committed; a dry run prints an empty diff instead.
 - **The artifact hand-off fails closed on a digest mismatch from `download-artifact` v8 on.** `digest-mismatch` defaults to `error` (v4–v7 only warned), so the file crossing from the credential-free job to the publishing one is checked against the digest recorded at upload *before* either workflow's own url/sha256 verification runs. Do not set it back to `warn`. Everything from v5 up also needs an Actions runner >= 2.327.1 for the node24 runtime — free on GitHub-hosted runners, a real constraint if a self-hosted one is ever added.
 - **GitHub Actions re-runs replay old workflow YAML** — if you fix a workflow bug and re-run the failed run, the fix is NOT applied. Trigger a fresh `workflow_dispatch` run instead.
 - **Concurrency group** `formula-update` with `cancel-in-progress: false` queues simultaneous dispatches from multiple source repos, preventing push conflicts.

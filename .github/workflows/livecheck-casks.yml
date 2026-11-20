@@ -5,7 +5,15 @@ on:
   # still bills macOS minutes, at ten times the Linux rate: its 12 runs of 1 to
   # 12 Oct 2026 billed 14. Restore `schedule: - cron: "0 7 * * *"` in the same
   # change that adds the next non-auto-updating cask.
+  # A hand start writes nothing unless it passes `-f dry_run=false` (Calvin, 13 Nov 2026). The
+  # guards use `toJSON(inputs.dry_run) == 'false'`: `inputs.dry_run == false` is also true when the
+  # input is missing, because null and '' compare equal to false.
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Check and verify only, push nothing. Set false to open the PRs."
+        type: boolean
+        default: true
 
 # Deliberately a separate workflow from livecheck.yml rather than another job in
 # it. The formula lane and the cask lane fail for unrelated reasons and on
@@ -24,7 +32,9 @@ permissions: {}
 # Its own group, not livecheck's: cask branches (`bump-<cask>-…`) never collide
 # with formula branches, so there is nothing to serialise between the two lanes.
 concurrency:
-  group: livecheck-casks
+  # A dry run waits in a group of its own: a group holds one waiting run, and a newly queued run
+  # cancels it, so a shared group would let a dry run cancel a waiting real one.
+  group: livecheck-casks${{ (github.event_name == 'workflow_dispatch' && toJSON(inputs.dry_run) != 'false') && '-dry-run' || '' }}
   cancel-in-progress: false
 
 jobs:
@@ -241,8 +251,19 @@ jobs:
             [ "$failed" -eq 0 ] || exit 1
           done 3< "${RUNNER_TEMP}/bumped.tsv"
 
+      - name: Dry run, report the skipped push
+        if: github.event_name == 'workflow_dispatch' && toJSON(inputs.dry_run) != 'false'
+        shell: bash
+        run: |
+          if [ -s "${RUNNER_TEMP}/bumped.tsv" ]; then
+            cut -f1,2 "${RUNNER_TEMP}/bumped.tsv"
+            echo "::notice title=Dry run::The casks above were bumped and verified in this runner only; nothing pushed, no PR opened. Start with -f dry_run=false to open them."
+          else
+            echo "::notice title=Dry run::No cask to bump; with -f dry_run=false this run would also have pushed nothing."
+          fi
+
       - name: Push the commits and open the PRs
-        if: steps.bump.outputs.any == 'true'
+        if: steps.bump.outputs.any == 'true' && (github.event_name != 'workflow_dispatch' || toJSON(inputs.dry_run) == 'false')
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.CALVINDOTSG_TAP_LIVECHECK_PAT }}
