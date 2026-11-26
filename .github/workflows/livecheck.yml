@@ -44,7 +44,7 @@ jobs:
     # the token powerless regardless. The action authenticates with the PAT.
     permissions: {}
     steps:
-      - uses: Homebrew/actions/setup-homebrew@ceec4e8419bb3c97ce96e9dda7738499ed5f869d # 2026.11.14.1
+      - uses: Homebrew/actions/setup-homebrew@61b401267256bb9c047d6d1481b176d5772a0ba7 # 2026.11.23.1
 
       # `brew bump` applies a per-strategy release cooldown; `brew bump-formula-pr`
       # does not, and the action drives livecheck straight into it — so npm publish
@@ -154,7 +154,7 @@ jobs:
     env:
       FORMULA: pymarkdownlnt
     steps:
-      - uses: Homebrew/actions/setup-homebrew@ceec4e8419bb3c97ce96e9dda7738499ed5f869d # 2026.11.14.1
+      - uses: Homebrew/actions/setup-homebrew@61b401267256bb9c047d6d1481b176d5772a0ba7 # 2026.11.23.1
 
       - name: Prepare Homebrew
         shell: bash
@@ -301,7 +301,7 @@ jobs:
     env:
       FORMULA: fitdecode
     steps:
-      - uses: Homebrew/actions/setup-homebrew@ceec4e8419bb3c97ce96e9dda7738499ed5f869d # 2026.11.14.1
+      - uses: Homebrew/actions/setup-homebrew@61b401267256bb9c047d6d1481b176d5772a0ba7 # 2026.11.23.1
 
       - name: Prepare Homebrew
         shell: bash
