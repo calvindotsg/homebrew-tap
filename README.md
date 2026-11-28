@@ -7,7 +7,7 @@
        src="https://raw.githubusercontent.com/calvindotsg/.github/main/social-preview/images/homebrew-tap.png">
 </picture>
 
-Personal Homebrew tap for calvindotsg.
+Personal Homebrew tap for calvindotsg. It holds my own mac-upkeep, a few third-party CLIs I rely on, and one cask.
 
 ## Install
 
@@ -50,6 +50,14 @@ tap "calvindotsg/tap", trusted: true
 | Cask | Description | Install |
 |------|-------------|---------|
 | [Firefoo](https://www.firefoo.com/) | GUI client for Firebase Firestore | `brew install --cask calvindotsg/tap/firefoo` |
+
+## How packages stay current
+
+Every bump lands through a PR. A bump PR merges on its own once `brew test-bot` passes.
+
+- **mac-upkeep.** Each release dispatches a `formula-update` event to this tap, and `update-formula.yml` opens the bump PR.
+- **Third-party formulae.** `livecheck.yml` runs daily at 07:00 UTC, checks each upstream for a new version, and opens the bump PR.
+- **Firefoo.** The app updates itself once installed. To move the cask's pinned version, run `update-cask.yml` by hand.
 
 ## Removed
 
